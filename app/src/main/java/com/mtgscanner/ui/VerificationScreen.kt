@@ -18,16 +18,32 @@ import coil.compose.AsyncImage
 import com.mtgscanner.model.*
 
 /**
- * VerificationScreen: User confirmation of detected card details.
- * Displays card image, name, set code, collector number, and allows quantity entry.
- * User can confirm, reject, or skip the card.
- * Integrates error handling UI for network failures, offline mode, and low OCR confidence.
+ * VerificationScreen: User confirmation interface for detected Magic cards.
+ * Displays OCR results, Scryfall matching candidates, and Scryfall card image preview.
+ * Allows user to confirm identity, enter quantity, or reject/skip the card.
+ * Integrates comprehensive error handling UI components:
+ * - OfflineNotice: Shows when cache was used (no internet)
+ * - ErrorSnackbar: Displays network or API errors
+ * - LowConfidenceWarning: Alerts when OCR confidence < 60% (encourages verification)
  *
- * @param cardVerification The card verification model with OCR output and match candidates
- * @param onConfirm Callback when user confirms the card with quantity
- * @param onReject Callback when user rejects the match
- * @param onSkip Callback to skip this card
- * @param modifier Compose modifier
+ * Card Flow:
+ * 1. CardDetection → OCR → FuzzyMatching → VerificationScreen (this screen)
+ * 2. User selects from match candidates (top-ranked by default)
+ * 3. User enters quantity of copies to add
+ * 4. User confirms → card saved to database OR rejects/skips
+ *
+ * Features:
+ * - Vertical scrolling for long card lists (e.g., 10+ match candidates)
+ * - LaunchedEffect to auto-select top candidate and show warnings
+ * - Real-time quantity input validation
+ * - Scryfall image preview (loads from CDN via Coil)
+ * - Error state UI components for resilient offline handling
+ *
+ * @param cardVerification CardVerification state with OCR/matches/errors
+ * @param onConfirm Callback(card: ScannedCard, quantity: Int) when user confirms
+ * @param onReject Callback() when user rejects this card
+ * @param onSkip Callback() when user skips for later review
+ * @param modifier Compose modifier for styling
  */
 @Composable
 fun VerificationScreen(

@@ -15,10 +15,12 @@ class CardTracker(
     private var nextTrackingId = 0
 
     /**
-     * Update tracker with current frame detections.
-     * Matches new detections to tracked cards; creates new tracks if no match.
-     * @param currentDetections Cards detected in this frame.
-     * @return Mapping of detection index to tracking ID.
+     * Update tracker with current frame detections and maintain tracking state.
+     * Matches new detections against previously tracked cards using position-based distance.
+     * Creates new tracks for unmatched detections and removes stale tracks (not seen for > 5 frames).
+     *
+     * @param currentDetections List of card regions detected in the current frame
+     * @return Map from detection index to assigned tracking ID (Int to Int)
      */
     fun updateTracks(currentDetections: List<CardRegion>): Map<Int, Int> {
         val matchMap = mutableMapOf<Int, Int>()
@@ -70,19 +72,23 @@ class CardTracker(
     }
 
     /**
-     * Check if a card has been seen consistently (not just a single frame).
-     * Helps prevent adding cards that are momentarily detected but unstable.
-     * @param trackingId Card tracking ID.
-     * @return True if card has been seen in >= 3 frames.
+     * Check if a tracked card has been detected consistently across multiple frames.
+     * Enforces stability requirement to prevent false positives from momentary detections.
+     * A card must be seen in at least 3 consecutive or near-consecutive frames to be considered stable.
+     *
+     * @param trackingId The tracking ID of the card to check (assigned by updateTracks)
+     * @return Boolean: true if card has been detected >= 3 times, false otherwise
      */
     fun isStableDetection(trackingId: Int): Boolean {
         return trackedCards[trackingId]?.framesSeen ?: 0 >= 3
     }
 
     /**
-     * Get time since card was first detected.
-     * @param trackingId Card tracking ID.
-     * @return Milliseconds since first detection, or -1 if not tracked.
+     * Get time elapsed since card was first detected in frames.
+     * Useful for timing out long-lost cards or analyzing detection persistence.
+     *
+     * @param trackingId Card tracking ID assigned by updateTracks()
+     * @return Milliseconds since first detection of this card, or -1 if tracking ID not found
      */
     fun timeSinceFirstSeen(trackingId: Int): Long {
         val card = trackedCards[trackingId] ?: return -1
@@ -91,6 +97,8 @@ class CardTracker(
 
     /**
      * Clear old tracks that haven't been seen recently.
+     * Removes tracks older than 30 seconds to prevent memory leaks from stale card detections.
+     * Should be called periodically (e.g., every 10 frames) to maintain performance.
      */
     fun pruneStaleTracks() {
         val now = System.currentTimeMillis()
@@ -100,7 +108,12 @@ class CardTracker(
     }
 
     /**
-     * Euclidean distance between two card regions.
+     * Calculate Euclidean distance between two card regions (centers).
+     * Used to match detections across frames - cards detected close to previous position are likely the same card.
+     *
+     * @param region1 First card region (previous frame)
+     * @param region2 Second card region (current frame)
+     * @return Distance in pixels between region centers
      */
     private fun positionDistance(region1: CardRegion, region2: CardRegion): Int {
         val dx = abs(region1.x - region2.x)
@@ -110,7 +123,14 @@ class CardTracker(
 }
 
 /**
- * Represents a tracked card across multiple frames.
+ * Internal data class representing a card being tracked across multiple frames.
+ * Maintains frame history and timing information for duplicate prevention.
+ *
+ * @param id Unique tracking ID assigned by CardTracker incrementing counter
+ * @param firstSeen Timestamp in milliseconds when this card was first detected
+ * @param lastRegion Most recent CardRegion bounding box for this tracked card
+ * @param framesSeen Count of frames where this card was detected (cumulative, increments on match)
+ * @param framesMissed Count of consecutive frames where this card was NOT detected (resets on match)
  */
 data class TrackedCard(
     val id: Int,

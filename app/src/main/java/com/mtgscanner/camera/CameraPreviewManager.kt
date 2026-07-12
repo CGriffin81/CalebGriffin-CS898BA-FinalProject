@@ -13,8 +13,24 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 /**
- * Manages CameraX lifecycle, preview setup, and frame analysis pipeline.
- * Handles camera permissions, binding use cases, and frame delivery to analyzer.
+ * Manages CameraX lifecycle binding, preview rendering, and frame analysis pipeline.
+ * Handles camera setup, permission management, use case binding, and resource cleanup.
+ * Coordinates between Compose UI (PreviewView), frame analysis (CardFrameAnalyzer),
+ * and lifecycle management (ProcessCameraProvider).
+ *
+ * CameraX Architecture:
+ * - ProcessCameraProvider: Singleton managing camera access and use case binding
+ * - Preview: Displays live camera feed to user
+ * - ImageAnalysis: Captures frames for card detection (STRATEGY_KEEP_ONLY_LATEST backpressure)
+ * - CardFrameAnalyzer: Processes frames on background executor thread
+ *
+ * Lifecycle:
+ * - setupCamera(): Initialize camera on CameraProvider availability (async)
+ * - releaseCamera(): Clean up camera and executor when activity destroyed
+ * - Camera access restricted to back camera (DEFAULT_BACK_CAMERA selector)
+ *
+ * @param context Android Context for camera access and executor setup
+ * @param lifecycleOwner Activity/Fragment lifecycle for camera binding (typically MainActivity)
  */
 class CameraPreviewManager(
     private val context: Context,
@@ -25,9 +41,19 @@ class CameraPreviewManager(
     private var frameAnalyzer: CardFrameAnalyzer? = null
 
     /**
-     * Initialize camera, bind preview and analyzer use cases.
-     * @param previewView Target view for camera preview.
-     * @param onFrameAnalyzed Callback when frame analysis completes.
+     * Initialize camera, bind preview and frame analysis use cases.
+     * Async operation: fetches ProcessCameraProvider and binds to lifecycle.
+     * Sets up Preview for live display and ImageAnalysis for frame processing (KEEP_ONLY_LATEST backpressure).
+     *
+     * Use Cases:
+     * - Preview: Renders camera frames to PreviewView in real-time
+     * - ImageAnalysis: Delivers frames to CardFrameAnalyzer on dedicated executor thread
+     *   - Backpressure strategy: KEEP_ONLY_LATEST drops old frames if analyzer is busy
+     *   - Executor: Single-threaded to ensure sequential frame processing
+     *
+     * @param previewView Target Compose PreviewView for camera preview rendering
+     * @param onFrameAnalyzed Callback invoked with analysis result after each frame processed
+     * @throws Exception if camera binding fails (caught internally, logged, but not rethrown)
      */
     fun setupCamera(
         previewView: PreviewView,
@@ -70,7 +96,10 @@ class CameraPreviewManager(
     }
 
     /**
-     * Release camera resources.
+     * Release camera resources and clean up.
+     * Should be called in Activity.onDestroy() or fragment lifecycle cleanup.
+     * Unbinds all use cases from ProcessCameraProvider and shuts down frame analysis executor.
+     * Critical for preventing memory leaks and ensuring camera is available for other apps.
      */
     fun releaseCamera() {
         cameraProvider?.unbindAll()

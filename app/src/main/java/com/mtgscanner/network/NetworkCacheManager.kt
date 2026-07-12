@@ -9,8 +9,17 @@ import java.util.concurrent.TimeUnit
 
 /**
  * NetworkCacheManager: Offline-first caching strategy for Scryfall cards.
- * Stores fetched card data locally to enable offline browsing and reduce API calls.
- * Implements cache expiration (optional TTL) and preload support.
+ * Stores fetched card data in SharedPreferences as JSON with 7-day TTL expiration.
+ * Enables offline browsing, reduces API call load, and provides fallback during connectivity issues.
+ * 
+ * Cache Implementation:
+ * - Uses SharedPreferences with Gson serialization
+ * - Each card cached with metadata timestamp for TTL tracking
+ * - 7-day cache expiration (608400000ms) for all cached cards
+ * - Supports bulk operations and search across cached data
+ * - All operations wrapped in try/catch with logging for resilience
+ *
+ * @param context Android Context for SharedPreferences access
  */
 class NetworkCacheManager(context: Context) {
 
@@ -26,7 +35,12 @@ class NetworkCacheManager(context: Context) {
     private val gson = Gson()
 
     /**
-     * Save card to cache.
+     * Save a single card to the cache.
+     * Serializes card to JSON and stores with timestamp for TTL tracking.
+     * Overwrites previous entry if card ID already cached.
+     *
+     * @param card ScryfallCard to cache
+     * @throws Exception caught internally and logged
      */
     fun saveCard(card: ScryfallCard) {
         try {
@@ -46,14 +60,22 @@ class NetworkCacheManager(context: Context) {
     }
 
     /**
-     * Save multiple cards in bulk.
+     * Save multiple cards to cache in bulk.
+     * Iterates through list calling saveCard() for each entry.
+     *
+     * @param cards List of ScryfallCards to cache
      */
     fun saveCards(cards: List<ScryfallCard>) {
         cards.forEach { saveCard(it) }
     }
 
     /**
-     * Retrieve card from cache.
+     * Retrieve a card from cache by Scryfall UUID.
+     * Checks cache expiration (7-day TTL) and removes expired entries.
+     * Returns null if card not found or cache has expired.
+     *
+     * @param cardId Scryfall UUID (unique card identifier)
+     * @return ScryfallCard?: The cached card if found and not expired, null otherwise
      */
     fun getCard(cardId: String): ScryfallCard? {
         return try {
@@ -80,7 +102,12 @@ class NetworkCacheManager(context: Context) {
     }
 
     /**
-     * Search cache by name (case-insensitive substring match).
+     * Search cache for cards by name using case-insensitive substring matching.
+     * Iterates through all cached cards and filters by query in card name.
+     * Does NOT check TTL; only for UI-level search (not critical for expired entries).
+     *
+     * @param query Substring to search for (case-insensitive)
+     * @return List<ScryfallCard>: All matching cards, or empty list if none found or cache is empty
      */
     fun searchCardsByName(query: String): List<ScryfallCard> {
         return try {
@@ -101,7 +128,11 @@ class NetworkCacheManager(context: Context) {
     }
 
     /**
-     * Get all cached cards (useful for offline browsing).
+     * Get all cached cards without TTL validation.
+     * Useful for offline browsing, collection display, and batch operations.
+     * Note: Returns all cards regardless of expiration (check getCacheStats for age info).
+     *
+     * @return List<ScryfallCard>: All cached cards, or empty list if cache is empty
      */
     fun getAllCachedCards(): List<ScryfallCard> {
         return try {
@@ -121,7 +152,10 @@ class NetworkCacheManager(context: Context) {
     }
 
     /**
-     * Clear all cached cards.
+     * Clear all cached cards from SharedPreferences.
+     * WARNING: This is destructive and cannot be undone. Useful for cache refresh or settings reset.
+     *
+     * @throws Exception caught internally and logged
      */
     fun clearCache() {
         try {
@@ -133,7 +167,10 @@ class NetworkCacheManager(context: Context) {
     }
 
     /**
-     * Get cache statistics (useful for debugging).
+     * Get cache usage statistics for debugging and UI display.
+     * Returns total cached cards, approximate memory usage, and oldest cached entry age.
+     *
+     * @return CacheStats data object with totalCards, totalSizeMb, oldestCardMs
      */
     fun getCacheStats(): CacheStats {
         val cards = getAllCachedCards()

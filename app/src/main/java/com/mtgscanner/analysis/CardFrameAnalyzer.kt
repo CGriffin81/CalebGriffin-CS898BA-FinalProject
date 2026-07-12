@@ -6,16 +6,41 @@ import android.graphics.Bitmap
 import android.graphics.Matrix
 
 /**
- * Processes camera frames for card detection and analysis.
- * Receives frames from CameraX ImageAnalysis and prepares them for downstream detection pipeline.
+ * Processes camera frames from CameraX for card detection and analysis.
+ * Implements ImageAnalysis.Analyzer to receive frames via CameraPreviewManager.
+ * Converts YUV image data from camera to RGB bitmap and handles device rotation.
+ * Queues processed frames to downstream DetectionPipeline via callback.
+ *
+ * Frame Processing Pipeline:
+ * 1. Receive ImageProxy (YUV format, 8-bit Y plane + interleaved UV) from CameraX
+ * 2. Extract YUV planes and convert to RGB bitmap
+ * 3. Apply device rotation correction (0°, 90°, 180°, 270°)
+ * 4. Invoke onFrameAnalyzed callback with processed frame
+ * 5. Close ImageProxy to release native memory
+ *
+ * Performance Considerations:
+ * - YUV→RGB conversion is CPU-intensive; runs on CameraPreviewManager's executor thread
+ * - CameraX STRATEGY_KEEP_ONLY_LATEST ensures only latest frame is processed (no queue buildup)
+ * - Frame callback should return quickly to avoid dropping subsequent frames
+ *
+ * @param onFrameAnalyzed Callback invoked for each processed frame; receives analysis result string
  */
 class CardFrameAnalyzer(
     private val onFrameAnalyzed: (analysisResult: String) -> Unit
 ) : ImageAnalysis.Analyzer {
 
     /**
-     * Called for each camera frame. Converts image to bitmap, extracts metadata, and queues analysis.
-     * @param image Current camera frame.
+     * Analyze a camera frame (required by ImageAnalysis.Analyzer).
+     * Called for each frame delivered by CameraX on the analyzer executor thread.
+     * Converts YUV image to RGB bitmap, applies rotation correction, and invokes callback.
+     * MUST call image.close() in finally block to release native memory.
+     *
+     * Exception Safety:
+     * - All exceptions caught and logged (not rethrown) to prevent camera pipeline disruption
+     * - image.close() guaranteed to run via finally block
+     *
+     * @param image ImageProxy containing camera frame in YUV format
+     * @throws Exception caught internally; frame is skipped if conversion fails
      */
     override fun analyze(image: ImageProxy) {
         try {
@@ -38,7 +63,19 @@ class CardFrameAnalyzer(
     }
 
     /**
-     * Convert ImageProxy (YUV) to Bitmap.
+     * Convert CameraX ImageProxy (YUV format) to RGB Bitmap.
+     * CameraX delivers frames in NV21 YUV format (Y plane + interleaved UV).
+     * Conversion steps:
+     * 1. Extract Y, U, V planes from ImageProxy
+     * 2. Interleave U/V into NV21 format for YuvImage constructor
+     * 3. Compress YuvImage to JPEG byte array (Java provides YuvImage support)
+     * 4. Decode JPEG to Bitmap (standard Android method)
+     * 5. Apply device rotation correction
+     *
+     * Performance: ~50-100ms for typical VGA frame (depends on device, camera resolution, CPU)
+     *
+     * @param imageProxy Camera frame from CameraX (YUV format)
+     * @return RGB Bitmap with device rotation applied
      */
     private fun imageToBitmap(imageProxy: ImageProxy): Bitmap {
         val planes = imageProxy.planes
@@ -80,7 +117,13 @@ class CardFrameAnalyzer(
     }
 
     /**
-     * Rotate bitmap by specified degrees.
+     * Rotate bitmap by specified degrees using Android Matrix transform.
+     * Corrects for device rotation (portrait/landscape) so card detection sees consistent orientation.
+     * Typical values: 0° (device portrait), 90° (landscape), 180°, 270°.
+     *
+     * @param bitmap Input bitmap to rotate
+     * @param degrees Clockwise rotation angle (typically 0, 90, 180, or 270)
+     * @return New rotated bitmap (original bitmap unchanged, caller should recycle if no longer needed)
      */
     private fun rotateBitmap(bitmap: Bitmap, degrees: Float): Bitmap {
         val matrix = Matrix().apply { postRotate(degrees) }

@@ -82,6 +82,13 @@ class MainActivity : ComponentActivity() {
     private var showLowConfidenceWarning by mutableStateOf(false)
     private var lowConfidenceValue by mutableStateOf(0.0)
 
+    /**
+     * Initialize the MainActivity with all required components.
+     * Sets up database, network layer, detection pipeline, OCR, fuzzy matching, and camera.
+     * Manages permissions and orchestrates the Compose UI setup.
+     *
+     * @param savedInstanceState Bundle containing previously saved state, or null if creating fresh
+     */
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -128,7 +135,9 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Handle camera permissions and set up Compose UI.
+     * Check camera permissions and initialize UI accordingly.
+     * If camera permission is already granted, initializes the camera and sets up the main UI.
+     * If permission is not granted, displays a permission request screen.
      */
     private fun setupPermissionsAndUI() {
         // Check if camera permission is already granted
@@ -148,7 +157,9 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Set up Compose UI (after permissions are handled).
+     * Set up the main Compose UI after permissions have been granted.
+     * Initializes the navigation system, sets up the detection pipeline callback,
+     * and renders the AppRoot composable with all necessary dependencies.
      */
     private fun setupUI() {
         setContent {
@@ -174,7 +185,10 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Set up Compose UI with permission request dialog.
+     * Set up Compose UI with an integrated permission request dialog.
+     * Displays a permission request screen that prompts the user for camera access.
+     * On grant: initializes camera and sets up main UI.
+     * On deny: logs error and closes the application.
      */
     private fun setupUIWithPermissionRequest() {
         setContent {
@@ -201,9 +215,12 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Wire DetectionPipeline.onCardReady callback to navigation and OCR pipeline.
-     * Orchestrates: Detection → OCR → Fuzzy matching → Scryfall lookup (with resilience) → Verification screen.
-     * Handles Result<T> sealed type (Success/CacheHit/Error) and shows appropriate error UI.
+     * Configure the DetectionPipeline callback to orchestrate the full card scanning workflow.
+     * Implements the pipeline: Detection → OCR → Fuzzy Matching → Scryfall Lookup (with Resilience) → Verification Screen.
+     * Handles all Result<T> states (Success/CacheHit/Error) and displays appropriate error/offline UI states.
+     * Updates low OCR confidence warnings when detected text confidence falls below 0.6.
+     *
+     * @param navigator AppNavigator instance to manage screen transitions after card processing is complete
      */
     private fun setupDetectionPipelineCallback(navigator: AppNavigator) {
         detectionPipeline.onCardReady = { cardBitmap, trackingId ->
@@ -279,7 +296,9 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Initialize camera after permissions are granted.
+     * Initialize the camera preview manager after permissions are confirmed.
+     * Prepares the camera for binding to the lifecycle and ready for frame analysis.
+     * Sets isInitializing to false upon completion, allowing the UI to proceed with camera rendering.
      */
     private fun initializeCamera() {
         lifecycleScope.launch {
@@ -293,17 +312,30 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Handle activity resume lifecycle event.
+     * Logs resume state; camera management is delegated to CameraPreviewManager via lifecycle binding.
+     */
     override fun onResume() {
         super.onResume()
         Log.d(TAG, "MainActivity resumed")
     }
 
+    /**
+     * Handle activity pause lifecycle event.
+     * Logs pause state; camera is paused by CameraPreviewManager via lifecycle binding.
+     */
     override fun onPause() {
         super.onPause()
         Log.d(TAG, "MainActivity paused")
         // Camera will be paused by CameraPreviewManager lifecycle handling
     }
 
+    /**
+     * Handle activity destruction lifecycle event.
+     * Cleans up camera resources by stopping the CameraPreviewManager.
+     * Logs any errors that occur during cleanup.
+     */
     override fun onDestroy() {
         super.onDestroy()
         Log.d(TAG, "MainActivity destroyed")
@@ -316,7 +348,12 @@ class MainActivity : ComponentActivity() {
 }
 
 /**
- * PermissionRequestScreen: Shows permission request dialog when camera permission is not granted.
+ * Composable screen that displays a camera permission request dialog.
+ * Automatically launches the system permission request on initial composition.
+ * Provides user feedback with a loading indicator while awaiting permission decision.
+ *
+ * @param onPermissionGranted Callback invoked when user grants camera permission
+ * @param onPermissionDenied Callback invoked when user denies camera permission
  */
 @Composable
 fun PermissionRequestScreen(

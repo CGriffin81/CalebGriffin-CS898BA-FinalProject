@@ -8,8 +8,21 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * ScryfallRepositoryResilience: Enhanced repository with network resilience, caching, and offline support.
- * Strategy: Try network with retries → fallback to cache → return null with error state.
+ * Enhanced card repository with built-in network resilience, intelligent caching, and offline support.
+ * Implements multi-layer fallback strategy:
+ * 1. Check network availability
+ * 2. Try identity lookup (set + collector) with exponential backoff retries
+ * 3. Try fuzzy name match with retries
+ * 4. Try general search with retries
+ * 5. Fallback to cache on all network failures
+ * 6. Return error state if both network and cache fail
+ * Uses Result<T> sealed class to communicate success/cache-hit/error states.
+ *
+ * @param apiClient ScryfallApiClient for making API requests
+ * @param database ScannedCardDatabase for local persistence
+ * @param cacheManager NetworkCacheManager for offline card caching
+ * @param networkStateManager NetworkStateManager to monitor connectivity
+ * @param retryPolicy RetryPolicy controlling retry behavior (max retries, delays, backoff)
  */
 class ScryfallRepositoryResilience(
     private val apiClient: ScryfallApiClient,
@@ -23,19 +36,48 @@ class ScryfallRepositoryResilience(
         private const val TAG = "ScryfallRepositoryResilience"
     }
 
+    /**
+     * Sealed result type for repository operations.
+     * Distinguishes between successful network fetch, cache hit, and error states.
+     *
+     * @param T Type of data returned in success/cache/error states
+     */
     sealed class Result<T> {
+        /**
+         * Successful network result with fresh data from Scryfall API.
+         * @param data T The retrieved data
+         */
         data class Success<T>(val data: T) : Result<T>()
+
+        /**
+         * Cache hit when network is unavailable or API returns no results.
+         * Indicates data was retrieved from local cache rather than live API.
+         * @param data T The cached data
+         * @param message String: : Description of cache status (default "From cache")
+         */
         data class CacheHit<T>(val data: T, val message: String = "From cache") : Result<T>()
+
+        /**
+         * Error state indicating both network and cache failed to provide data.
+         * @param message String: Human-readable error description
+         * @param fallbackData T? : Optional fallback data (e.g., partial results) or null if none available
+         */
         data class Error<T>(val message: String, val fallbackData: T? = null) : Result<T>()
     }
 
     /**
-     * Find card candidates with full resilience strategy:
-     * 1. Check if online
-     * 2. Try identity lookup with retry
-     * 3. Try fuzzy name with retry
-     * 4. Try search with retry
-     * 5. Fallback to cache on all failures
+     * Find card candidates with comprehensive resilience strategy.
+     * Executes in this order:
+     * 1. Check network availability; if offline, attempt cache lookup
+     * 2. Strategy 1 - Identity Lookup: If set code and collector number provided, try exact identity match with retries
+     * 3. Strategy 2 - Fuzzy Name: Try fuzzy name matching (e.g., "Black Lotus" finds "Black Lotus" variants)
+     * 4. Strategy 3 - General Search: Try general name search with top 10 results
+     * 5. Fallback - Cache: Search local cache if all network strategies fail
+     * 6. Error: Return error if both network and cache are exhausted
+     * Results are cached for offline use. Runs on Dispatchers.Default.
+     *
+     * @param detectedText OCR-recognized card text containing name, set code, and collector number
+     * @return Result object: Success if found via network, CacheHit if found in cache, Error with optional fallback data
      */
     suspend fun findCardCandidatesResilient(detectedText: DetectedCardText): Result<List<ScryfallCard>> =
         withContext(Dispatchers.Default) {
@@ -103,7 +145,15 @@ class ScryfallRepositoryResilience(
         }
 
     /**
-     * Get card by identity with resilience.
+     * Retrieve a single card by its exact identity (set code + collector number) with resilience.
+     * If offline, searches local cache for matching card.
+     * If online, attempts API lookup with retry policy; falls back to cache on network failure.
+     * Runs on Dispatchers.IO to avoid blocking the main thread.
+     *
+     * @param setCode Scryfall set code (e.g., "MIR", "DOM") for the card
+     * @param collectorNumber Collector number (e.g., "42", "123*") uniquely identifying the card within the set
+     * @return Result object: Success if found via network, CacheHit if found in cache, Error if card not found
+     * @throws Exception (implicitly caught and converted to Result.Error) if API calls fail after all retries
      */
     suspend fun getCardByIdentityResilient(setCode: String, collectorNumber: String): Result<ScryfallCard> =
         withContext(Dispatchers.IO) {
@@ -139,7 +189,14 @@ class ScryfallRepositoryResilience(
         }
 
     /**
-     * Preload entire set for offline use.
+     * Preload all cards from a specific set into the local cache for offline use.
+     * Requires active network connection; returns error if offline.
+     * On success, saves all retrieved cards to cache (capped at available cards for the set).
+     * Useful for preloading common sets (Standard, Limited formats) for offline collection management.
+     * Runs on Dispatchers.Default.
+     *
+     * @param setCode Scryfall set code (e.g., "MIR", "DOM", "SLD") to preload
+     * @return Result object: Success with list of preloaded cards, Error if preload fails or offline
      */
     suspend fun preloadSetResilient(setCode: String): Result<List<ScryfallCard>> =
         withContext(Dispatchers.Default) {
@@ -163,7 +220,10 @@ class ScryfallRepositoryResilience(
         }
 
     /**
-     * Get cache statistics for debugging.
+     * Retrieve cache statistics and metadata for debugging and monitoring.
+     * Provides insight into cache size, hit rates, and offline capability.
+     *
+     * @return NetworkCacheManager.CacheStats object containing cache hit/miss counts, size, and other diagnostics
      */
     fun getCacheStats(): NetworkCacheManager.CacheStats = cacheManager.getCacheStats()
 }

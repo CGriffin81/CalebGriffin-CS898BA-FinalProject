@@ -9,11 +9,28 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * ScryfallApiClient: Network client for Scryfall card database.
- * Handles API calls, error handling, response parsing, and conversion to domain models.
+ * Retrofit client for Scryfall API card database queries.
+ * Provides suspending functions for card lookups with automatic response parsing and error handling.
+ * All API calls run on Dispatchers.IO for non-blocking network operations.
+ *
+ * API Details:
+ * - Base URL: https://api.scryfall.com
+ * - Rate limit: 100 requests per second (enforced server-side; honors Retry-After header)
+ * - Response format: JSON with automatic Gson deserialization
+ * - No authentication required (free, public API)
+ *
+ * Error Handling: All functions catch exceptions and return empty list or null, logging errors.
+ * Responses can be cached via NetworkCacheManager to reduce API calls.
  * 
- * Rate limit: 100 requests per second; honors Retry-After header.
- * Caching: Responses can be cached locally to reduce API calls.
+ * Methods support multiple lookup strategies:
+ * - Exact name matching (precise but fails on typos)
+ * - Fuzzy name matching (forgiving, handles variations)
+ * - Set + collector number identity (most reliable when known)
+ * - Advanced query syntax (powerful but complex)
+ * - Bulk set loading (useful for offline preloading)
+ *
+ * @property retrofit Retrofit instance with Gson converter
+ * @property apiService Retrofit-generated ScryfallApiService proxy
  */
 class ScryfallApiClient {
 
@@ -139,15 +156,21 @@ class ScryfallApiClient {
         }
 
     /**
-     * Perform advanced search with Scryfall query syntax.
-     * Examples:
-     *   "set:lea" → All cards in Limited Edition Alpha
-     *   "type:land" → All lands
-     *   "rarity:rare" → All rare cards
-     *   "colors:ub" → Blue-black cards
-     * 
-     * @param advancedQuery Scryfall search query syntax
-     * @return List of matching cards
+     * Perform advanced search using Scryfall query syntax.
+     * Supports complex filters and boolean operators for powerful card discovery.
+     *
+     * Example queries:
+     * - "set:lea" → All cards in Limited Edition Alpha
+     * - "type:land" → All lands
+     * - "rarity:rare" → All rare cards
+     * - "colors:ub" → Blue-black cards
+     * - "cmc:3 is:legendary" → 3-cost legendary creatures
+     * - "text:flying" → Cards with flying ability
+     *
+     * Full query syntax reference: https://scryfall.com/docs/syntax
+     *
+     * @param advancedQuery Scryfall search query syntax string
+     * @return List<ScryfallCard>: Matching cards, or empty list on error/no results
      */
     suspend fun advancedSearch(advancedQuery: String): List<ScryfallCard> =
         withContext(Dispatchers.IO) {
@@ -169,19 +192,23 @@ class ScryfallApiClient {
         }
 
     /**
-     * Find all cards in a set (useful for bulk loading a set for offline use).
-     * 
-     * @param setCode Set code (e.g. "LEA", "M21")
-     * @return List of all cards in the set
+     * Find all cards in a Magic set (useful for offline preloading or set browsing).
+     * Internally uses advancedSearch("set:setCode") for efficient bulk retrieval.
+     * Results not paginated; Scryfall returns all cards in the set.
+     *
+     * @param setCode Set code (e.g., "LEA", "M21", "KHM")
+     * @return List<ScryfallCard>: All cards in set, or empty list if invalid set code
      */
     suspend fun getCardsBySet(setCode: String): List<ScryfallCard> =
         advancedSearch("set:$setCode")
 
     /**
-     * Validate set code against Scryfall's official set list.
-     * 
-     * @param setCode Set code to validate
-     * @return true if valid, false otherwise
+     * Validate if a set code is recognized by Scryfall.
+     * Useful before attempting set-based lookups or filtering.
+     * Internally fetches all valid sets and checks membership (case-insensitive).
+     *
+     * @param setCode Set code to validate (case-insensitive comparison)
+     * @return Boolean: true if set code is valid, false if invalid or error occurred
      */
     suspend fun isValidSetCode(setCode: String): Boolean = withContext(Dispatchers.IO) {
         return@withContext try {
@@ -199,9 +226,11 @@ class ScryfallApiClient {
     }
 
     /**
-     * Get a random card (for testing or exploration).
-     * 
-     * @return Random ScryfallCard
+     * Retrieve a random card from Scryfall database.
+     * Useful for testing, UI exploration, or random card suggestions.
+     * Each call returns a different random card (Scryfall ensures good distribution).
+     *
+     * @return ScryfallCard?: Random card object, or null if API call failed
      */
     suspend fun getRandomCard(): ScryfallCard? = withContext(Dispatchers.IO) {
         return@withContext try {
@@ -218,7 +247,12 @@ class ScryfallApiClient {
     }
 
     /**
-     * Convert Scryfall API response to domain model.
+     * Convert Scryfall API response data class to domain model ScryfallCard.
+     * Bridges JSON deserialization layer with business logic.
+     * Handles type conversion, field mapping, and nested ImageUris structure.
+     *
+     * @receiver ScryfallCardResponse parsed from Scryfall API JSON
+     * @return ScryfallCard domain model, or null if conversion fails
      */
     private fun ScryfallCardResponse.toDomainModel(): ScryfallCard? {
         return try {

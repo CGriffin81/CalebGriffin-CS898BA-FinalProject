@@ -5,8 +5,12 @@ import android.util.Log
 import com.mtgscanner.model.DetectedCardText
 
 /**
- * Orchestrates OCR pipeline: preprocessing, text recognition, and field extraction.
- * Coordinates between image preparation and text parsing.
+ * Orchestrates the complete OCR pipeline for card text recognition.
+ * Coordinates preprocessing (image enhancement, noise reduction) and text recognition,
+ * with fallback to region-focused recognition if single-pass confidence is below 0.6.
+ *
+ * @param ocrProcessor CardOcrProcessor instance for running OCR on images; default creates new instance
+ * @param preprocessor OcrPreprocessor instance for image preparation; default creates new instance
  */
 class OcrPipeline(
     private val ocrProcessor: CardOcrProcessor = CardOcrProcessor(),
@@ -14,10 +18,14 @@ class OcrPipeline(
 ) {
 
     /**
-     * Run full OCR pipeline on a card image.
-     * @param cardBitmap Card image to recognize.
-     * @param trackingId Tracking ID from detection.
-     * @return Detected card text with extracted fields.
+     * Execute the full OCR pipeline on a card bitmap.
+     * Preprocesses the image for better text recognition, runs OCR, and extracts card fields (name, set, collector number).
+     * If initial OCR confidence is below 0.6, attempts region-focused OCR as fallback for improvement.
+     * All errors are caught and logged; returns empty DetectedCardText on failure.
+     *
+     * @param cardBitmap Card image bitmap to recognize, expected RGB format
+     * @param trackingId Tracking identifier from the detection pipeline (used for logging/correlation)
+     * @return DetectedCardText object containing recognized card name, set code, collector number, confidence score, and raw OCR text
      */
     suspend fun recognizeCard(
         cardBitmap: Bitmap,
@@ -54,8 +62,14 @@ class OcrPipeline(
     }
 
     /**
-     * Region-focused OCR: extract card name, set, and collector from specific card regions.
-     * Improves accuracy when full-card OCR is noisy.
+     * Perform region-focused OCR as a fallback when full-card OCR has low confidence.
+     * Divides the card into distinct regions (name region, collector region) and processes each independently.
+     * Combines results by taking the name from the name region and collector info from the collector region.
+     * Averaged confidence score across regions provides more robust recognition.
+     *
+     * @param cardBitmap Card image to process by regions
+     * @param trackingId Tracking identifier for logging correlation
+     * @return DetectedCardText combining results from individual region recognition
      */
     private suspend fun recognizeByRegions(
         cardBitmap: Bitmap,

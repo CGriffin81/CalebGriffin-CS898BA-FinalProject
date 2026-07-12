@@ -18,13 +18,31 @@ import com.mtgscanner.detection.DetectionPipeline
 import com.mtgscanner.model.*
 
 /**
- * AppRoot: Root composable that manages navigation and screen routing.
- * Integrates all three screens (Camera, Verification, Collection) and main menu.
+ * AppRoot: Root navigation composable routing all screens and managing transitions.
+ * Implements state-driven navigation using AppNavigator state machine.
+ * Conditionally renders current screen (MAIN, CAMERA, VERIFICATION, COLLECTION) based on navigation state.
+ * Manages back button overlays, dependencies passing, and screen callbacks.
  *
- * @param navigator AppNavigator for managing screen state
- * @param cameraPreviewManager CameraX lifecycle manager
- * @param detectionPipeline Detection and tracking orchestrator
- * @param database Room database for card storage
+ * Navigation Routes:
+ * - MAIN: Menu → CameraClick → CAMERA or CollectionClick → COLLECTION
+ * - CAMERA: Card detected → VERIFICATION with CardVerification data
+ * - VERIFICATION: Confirm → save + return to CAMERA; Reject/Skip → CAMERA
+ * - COLLECTION: Browse → can select card details (future enhancement)
+ *
+ * Dependencies:
+ * - cameraPreviewManager: CameraX lifecycle, passed to CameraScreen
+ * - detectionPipeline: Card detection/tracking, passed to CameraScreen
+ * - database: Room database, passed for card storage on confirmation
+ *
+ * Back Button Behavior:
+ * - Back buttons added as overlays on CAMERA and VERIFICATION screens (for landscape support)
+ * - Buttons routed to appropriate screen (navigator.returnToMain() or navigator.navigateToCamera())
+ * - Main and Collection screens have built-in navigation controls
+ *
+ * @param navigator AppNavigator managing current screen state
+ * @param cameraPreviewManager CameraX lifecycle and preview binding
+ * @param detectionPipeline Detection and tracking for frame processing
+ * @param database Room database for scanned card persistence
  */
 @Composable
 fun AppRoot(
