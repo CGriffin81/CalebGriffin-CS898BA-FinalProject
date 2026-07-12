@@ -1,4 +1,4 @@
-git# Pre-Launch Checklist
+# Pre-Launch Checklist
 
 ## Build Environment Verification
 - [ ] JDK 8+ installed (verify: `java -version`)
@@ -95,14 +95,16 @@ git# Pre-Launch Checklist
 - [ ] Network connectivity available (WiFi or mobile)
 
 ## Pre-Deployment APK Build
-- [ ] Clean build directory: `gradle clean`
-- [ ] Build debug APK: `gradle assembleDebug`
+- [ ] Stop old daemons: `./gradlew.bat --stop`
+- [ ] Set Java 21 (Android Studio JBR) for shell session
+- [ ] Clean build directory: `./gradlew.bat clean`
+- [ ] Build debug APK: `./gradlew.bat assembleDebug`
 - [ ] Verify APK created at `app/build/outputs/apk/debug/app-debug.apk`
 - [ ] APK file size reasonable (< 150MB for typical Android build)
 - [ ] APK signed with debug key
 
 ## Deployment
-- [ ] APK installed via adb: `adb install -r app-debug.apk`
+- [ ] APK installed via adb: `adb install -r .\\app\\build\\outputs\\apk\\debug\\app-debug.apk`
 - [ ] Installation successful (no errors)
 - [ ] App launches successfully
 - [ ] PermissionRequestScreen appears if permissions not granted
@@ -129,31 +131,35 @@ git# Pre-Launch Checklist
 
 ## Build & Deploy Command Sequence
 
-```bash
+```powershell
 # 1. Navigate to project
-cd ~/CalebGriffin-CS898BA-FinalProject
+Set-Location "D:\Workspace\CS898BA\CalebGriffin-CS898BA-FinalProject"
 
-# 2. Verify environment
-java -version
-gradle -version
+# 2. Stop old daemons and force Java 21 (Android Studio JBR)
+.\gradlew.bat --stop
+$env:JAVA_HOME="C:\Program Files\Android\Android Studio\jbr"
+$env:Path="$env:JAVA_HOME\bin;" + $env:Path
 
-# 3. Clean and build
-gradle clean
-gradle assembleDebug
+# 3. Verify environment (must show Gradle 8.2.1 + JVM 21)
+.\gradlew.bat -version
 
-# 4. Verify APK
-ls -lh app/build/outputs/apk/debug/app-debug.apk
+# 4. Clean and build with wrapper (do NOT use `gradle assembleDebug`)
+.\gradlew.bat clean
+.\gradlew.bat assembleDebug
 
-# 5. Connect device
+# 5. Verify APK
+Get-Item .\app\build\outputs\apk\debug\app-debug.apk
+
+# 6. Connect device
 adb devices
 
-# 6. Install APK
-adb install -r app/build/outputs/apk/debug/app-debug.apk
+# 7. Install APK
+adb install -r .\app\build\outputs\apk\debug\app-debug.apk
 
-# 7. Launch app
+# 8. Launch app
 adb shell am start -n com.mtgscanner/.MainActivity
 
-# 8. Monitor logs
+# 9. Monitor logs
 adb logcat com.mtgscanner:V
 ```
 
