@@ -45,7 +45,7 @@ android {
     }
 
     composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.3"
+        kotlinCompilerExtensionVersion = "1.5.14"
     }
 
     packagingOptions {
@@ -81,7 +81,7 @@ dependencies {
     implementation("com.google.mlkit:text-recognition:16.0.0")
 
     // OpenCV
-    implementation("org.opencv:opencv-android:4.8.1")
+    implementation("org.openpnp:opencv:4.9.0-0")
 
     // Room Database
     implementation("androidx.room:room-runtime:2.6.1")

@@ -30,7 +30,7 @@ data class ImageUrisResponse(
 )
 
 data class ScryfallSearchResponse(
-    val object: String,  // "list"
+    val `object`: String,  // "list"
     val total_cards: Int,
     val has_more: Boolean,
     val next_page: String? = null,
@@ -38,7 +38,7 @@ data class ScryfallSearchResponse(
 )
 
 data class ScryfallError(
-    val object: String,  // "error"
+    val `object`: String,  // "error"
     val code: String,
     val status: Int,
     val type: String? = null,

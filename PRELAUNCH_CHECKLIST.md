@@ -2,9 +2,9 @@
 
 ## Build Environment Verification
 - [ ] JDK 8+ installed (verify: `java -version`)
-- [ ] Android SDK installed with API 34 (verify: `android list targets`)
+- [ ] Android SDK installed with API 34 (verify: `sdkmanager --list_installed` )
 - [ ] Android NDK installed (for OpenCV)
-- [ ] Gradle 7.0+ available (verify: `gradle -version`)
+- [ ] Gradle 7.0+ available (verify: `gradle -v`)
 - [ ] JAVA_HOME environment variable set
 - [ ] ANDROID_HOME environment variable set
 

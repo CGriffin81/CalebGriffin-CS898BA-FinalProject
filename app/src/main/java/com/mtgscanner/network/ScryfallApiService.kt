@@ -113,7 +113,7 @@ interface ScryfallApiService {
  * ScryfallSetsResponse: Response model for /sets endpoint.
  */
 data class ScryfallSetsResponse(
-    val object: String,  // "list"
+    val `object`: String,  // "list"
     val data: List<ScryfallSet>
 )
 

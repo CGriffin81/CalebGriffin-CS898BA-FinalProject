@@ -3,12 +3,15 @@ package com.mtgscanner.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -82,7 +85,7 @@ fun AppRoot(
                             .background(Color.Black.copy(alpha = 0.6f), shape = RoundedCornerShape(50))
                     ) {
                         Icon(
-                            Icons.Default.ArrowBack,
+                            Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back",
                             tint = Color.White
                         )
@@ -95,7 +98,7 @@ fun AppRoot(
                     Box(modifier = Modifier.fillMaxSize()) {
                         VerificationScreen(
                             cardVerification = cardVerification,
-                            onConfirm = { card, qty ->
+                            onConfirm = { _, _ ->
                                 // Save to database
                                 // TODO: Insert into Room database
                                 navigator.navigateToCamera() // Return to camera after confirm
@@ -117,7 +120,7 @@ fun AppRoot(
                                 .background(Color.Black.copy(alpha = 0.6f), shape = RoundedCornerShape(50))
                         ) {
                             Icon(
-                                Icons.Default.ArrowBack,
+                                Icons.AutoMirrored.Filled.ArrowBack,
                                 contentDescription = "Back",
                                 tint = Color.White
                             )
@@ -130,7 +133,7 @@ fun AppRoot(
                 Box(modifier = Modifier.fillMaxSize()) {
                     CollectionScreen(
                         database = database,
-                        onEditCard = { card ->
+                        onEditCard = { _ ->
                             // TODO: Show edit dialog for quantity
                         }
                     )
@@ -144,7 +147,7 @@ fun AppRoot(
                             .background(Color.Black.copy(alpha = 0.6f), shape = RoundedCornerShape(50))
                     ) {
                         Icon(
-                            Icons.Default.ArrowBack,
+                            Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back",
                             tint = Color.White
                         )
@@ -210,7 +213,7 @@ fun MainMenuScreen(
                 shape = RoundedCornerShape(12.dp)
             ) {
                 Icon(
-                    androidx.compose.material.icons.filled.Videocam,
+                    Icons.Default.CameraAlt,
                     contentDescription = "Scan Cards",
                     modifier = Modifier.size(24.dp),
                     tint = Color(0xFF1976D2)
@@ -235,7 +238,7 @@ fun MainMenuScreen(
                 border = androidx.compose.foundation.BorderStroke(2.dp, Color.White)
             ) {
                 Icon(
-                    androidx.compose.material.icons.filled.Collections,
+                    Icons.Default.GridView,
                     contentDescription = "View Collection",
                     modifier = Modifier.size(24.dp),
                     tint = Color.White

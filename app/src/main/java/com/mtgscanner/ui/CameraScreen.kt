@@ -13,7 +13,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.camera.view.PreviewView
 import com.mtgscanner.camera.CameraPreviewManager
 import com.mtgscanner.detection.DetectionPipeline
 import com.mtgscanner.model.CardVerification
@@ -57,11 +57,10 @@ fun CameraScreen(
         AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
-                androidx.compose.ui.viewinterop.PreviewView(ctx).apply {
+                PreviewView(ctx).apply {
                     cameraPreviewManager.setupCamera(
-                        lifecycleOwner = ctx as androidx.lifecycle.LifecycleOwner,
                         previewView = this,
-                        cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+                        onFrameAnalyzed = { }
                     )
                 }
             }

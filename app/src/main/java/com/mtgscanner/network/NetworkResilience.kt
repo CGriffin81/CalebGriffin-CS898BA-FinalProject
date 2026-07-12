@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.util.Log
+import kotlin.math.pow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -133,7 +134,7 @@ data class RetryPolicy(
  * Extension: Exponentiation for Float
  */
 private fun Float.pow(exponent: Int): Float {
-    return kotlin.math.pow(this, exponent.toFloat())
+    return this.toDouble().pow(exponent.toDouble()).toFloat()
 }
 
 /**

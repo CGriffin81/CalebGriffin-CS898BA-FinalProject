@@ -4,11 +4,15 @@ import androidx.room.Dao
 import androidx.room.Delete
 import androidx.room.Entity
 import androidx.room.Insert
+import androidx.room.Database
 import androidx.room.PrimaryKey
 import androidx.room.Query
+import androidx.room.Room
+import androidx.room.RoomDatabase
 import androidx.room.Update
 import com.mtgscanner.model.ScannedCard
 import kotlinx.coroutines.flow.Flow
+import android.content.Context
 
 /**
  * Room database entity representing a scanned Magic: The Gathering card in the local collection.
@@ -45,6 +49,12 @@ data class ScannedCardEntity(
     val scannedTimestamp: Long = System.currentTimeMillis(),
     val userConfirmed: Boolean = false
 ) {
+    val name: String
+        get() = cardName
+
+    val scannedAt: Long
+        get() = scannedTimestamp
+
     /**
      * Convert this database entity to a domain model ScannedCard.
      * Bridges Room persistence layer with business logic model.
@@ -180,4 +190,24 @@ interface ScannedCardDao {
      */
     @Query("DELETE FROM scanned_cards")
     suspend fun clearAllCards()
+}
+
+@Database(entities = [ScannedCardEntity::class], version = 1, exportSchema = false)
+abstract class ScannedCardDatabase : RoomDatabase() {
+    abstract fun scannedCardDao(): ScannedCardDao
+
+    companion object {
+        @Volatile
+        private var INSTANCE: ScannedCardDatabase? = null
+
+        fun getInstance(context: Context): ScannedCardDatabase {
+            return INSTANCE ?: synchronized(this) {
+                INSTANCE ?: Room.databaseBuilder(
+                    context.applicationContext,
+                    ScannedCardDatabase::class.java,
+                    "scanned_cards.db"
+                ).build().also { INSTANCE = it }
+            }
+        }
+    }
 }

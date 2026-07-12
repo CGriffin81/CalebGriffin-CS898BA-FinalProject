@@ -26,7 +26,7 @@ class NetworkCacheManager(context: Context) {
     companion object {
         private const val TAG = "NetworkCacheManager"
         private const val PREFS_NAME = "mtg_scanner_cache"
-        private const val CACHE_EXPIRATION_MS = TimeUnit.DAYS.toMillis(7)  // 7 day TTL
+        private val CACHE_EXPIRATION_MS = TimeUnit.DAYS.toMillis(7)  // 7 day TTL
         private const val KEY_CARD_PREFIX = "card_"
         private const val KEY_CARD_METADATA = "card_metadata_"
     }
@@ -176,12 +176,12 @@ class NetworkCacheManager(context: Context) {
         val cards = getAllCachedCards()
         return CacheStats(
             totalCards = cards.size,
-            totalSizeMb = prefs.all.values.sumOf { (it as? String)?.length ?: 0 } / (1024 * 1024),
+            totalSizeMb = prefs.all.values.sumOf { (it as? String)?.length ?: 0 }.toLong() / (1024L * 1024L),
             oldestCardMs = if (cards.isEmpty()) 0 else {
                 prefs.all
                     .filter { (key, _) -> key.startsWith(KEY_CARD_METADATA) }
                     .values
-                    .minOfOrNull { (it as? Long) ?: Long.MAX_VALUE } ?: 0
+                    .minOfOrNull { (it as? Long) ?: Long.MAX_VALUE } ?: 0L
             }
         )
     }

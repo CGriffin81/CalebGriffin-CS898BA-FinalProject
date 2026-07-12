@@ -4,6 +4,11 @@ pluginManagement {
         mavenCentral()
         gradlePluginPortal()
     }
+    plugins {
+        id("com.android.application") version "8.2.2"
+        id("org.jetbrains.kotlin.android") version "1.9.24"
+        id("org.jetbrains.kotlin.kapt") version "1.9.24"
+    }
 }
 
 dependencyResolutionManagement {
@@ -11,7 +16,6 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        jcenter()
     }
 }
 

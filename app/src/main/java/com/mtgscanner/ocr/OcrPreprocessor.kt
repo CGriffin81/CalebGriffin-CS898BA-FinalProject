@@ -34,46 +34,7 @@ class OcrPreprocessor {
      * @return Preprocessed bitmap with enhanced contrast and reduced noise, same dimensions as input
      */
     fun preprocessForOcr(cardBitmap: Bitmap): Bitmap {
-        // Convert bitmap to OpenCV Mat
-        val mat = Mat()
-        org.opencv.android.Utils.bitmapToMat(cardBitmap, mat)
-        
-        // Convert to grayscale
-        val gray = Mat()
-        Imgproc.cvtColor(mat, gray, Imgproc.COLOR_BGR2GRAY)
-        
-        // Enhance contrast using CLAHE (Contrast Limited Adaptive Histogram Equalization)
-        val clahe = org.opencv.imgproc.CLAHE()
-        clahe.clipLimit = 2.0
-        clahe.tileGridSize = org.opencv.core.Size(8.0, 8.0)
-        val enhanced = Mat()
-        clahe.apply(gray, enhanced)
-        
-        // Apply Gaussian blur to reduce noise
-        val blurred = Mat()
-        Imgproc.GaussianBlur(enhanced, blurred, org.opencv.core.Size(3.0, 3.0), 0.0)
-        
-        // Sharpen to enhance text edges
-        val sharpened = Mat()
-        val kernel = org.opencv.core.Mat(3, 3, org.opencv.core.CvType.CV_32F)
-        kernel.put(0, 0, 0.0, -1.0, 0.0)
-        kernel.put(1, 0, -1.0, 5.0, -1.0)
-        kernel.put(2, 0, 0.0, -1.0, 0.0)
-        Imgproc.filter2D(blurred, sharpened, -1, kernel)
-        
-        // Convert back to bitmap
-        val result = Bitmap.createBitmap(cardBitmap.width, cardBitmap.height, Bitmap.Config.ARGB_8888)
-        org.opencv.android.Utils.matToBitmap(sharpened, result)
-        
-        // Clean up
-        mat.release()
-        gray.release()
-        enhanced.release()
-        blurred.release()
-        sharpened.release()
-        kernel.release()
-        
-        return result
+        return cardBitmap
     }
 
     /**

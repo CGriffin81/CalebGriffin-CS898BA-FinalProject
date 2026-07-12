@@ -5,7 +5,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -20,6 +22,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.mtgscanner.data.ScannedCardDatabase
 import com.mtgscanner.model.ScannedCard
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.StateFlow
 
 /**
@@ -31,6 +34,7 @@ import kotlinx.coroutines.flow.StateFlow
  * @param modifier Compose modifier
  */
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 fun CollectionScreen(
     database: ScannedCardDatabase,
     onEditCard: (card: ScannedCard) -> Unit,
@@ -41,22 +45,40 @@ fun CollectionScreen(
     var sortOrder by remember { mutableStateOf(SortOrder.NAME_ASC) }
 
     // Fetch all cards from database (Flow-based reactive updates)
-    val allCards by database.scannedCardDao().getAllCards().collectAsState(initial = emptyList())
-    
+    val allCards by database.scannedCardDao().getAllCards()
+        .map { entities -> entities.map { it.toScannedCard() } }
+        .collectAsState(initial = emptyList())
+
     // Filter and sort cards
-    val filteredCards = allCards
-        .filter { card ->
-            card.name.contains(searchQuery, ignoreCase = true) &&
-            (filterSet == null || card.setCode == filterSet)
-        }
-        .sortedBy { card ->
-            when (sortOrder) {
-                SortOrder.NAME_ASC -> card.name
-                SortOrder.NAME_DESC -> card.name
-                SortOrder.SET_ASC -> card.setCode
-                SortOrder.DATE_NEWEST -> -card.scannedAt
+    val filteredCards = when (sortOrder) {
+        SortOrder.NAME_ASC -> allCards
+            .filter { card ->
+                card.cardName.contains(searchQuery, ignoreCase = true) &&
+                    (filterSet == null || card.setCode == filterSet)
             }
-        }
+            .sortedBy { it.cardName.lowercase() }
+
+        SortOrder.NAME_DESC -> allCards
+            .filter { card ->
+                card.cardName.contains(searchQuery, ignoreCase = true) &&
+                    (filterSet == null || card.setCode == filterSet)
+            }
+            .sortedByDescending { it.cardName.lowercase() }
+
+        SortOrder.SET_ASC -> allCards
+            .filter { card ->
+                card.cardName.contains(searchQuery, ignoreCase = true) &&
+                    (filterSet == null || card.setCode == filterSet)
+            }
+            .sortedBy { it.setCode.lowercase() }
+
+        SortOrder.DATE_NEWEST -> allCards
+            .filter { card ->
+                card.cardName.contains(searchQuery, ignoreCase = true) &&
+                    (filterSet == null || card.setCode == filterSet)
+            }
+            .sortedByDescending { it.scannedTimestamp }
+    }
 
     val uniqueSets = allCards.map { it.setCode }.distinct().sorted()
     val totalCards = allCards.sumOf { it.quantity }
@@ -145,7 +167,7 @@ fun CollectionScreen(
                         onClick = { expandSort = !expandSort },
                         modifier = Modifier.height(40.dp)
                     ) {
-                        Icon(Icons.Default.Sort, contentDescription = "Sort", Modifier.size(18.dp))
+                        Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = "Sort", Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(4.dp))
                         Text("Sort", fontSize = 12.sp)
                     }
@@ -271,7 +293,7 @@ fun CardGridItem(
             if (!card.imageUrl.isNullOrEmpty()) {
                 AsyncImage(
                     model = card.imageUrl,
-                    contentDescription = card.name,
+                    contentDescription = card.cardName,
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop
                 )
@@ -315,7 +337,7 @@ fun CardGridItem(
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 Text(
-                    text = card.name,
+                    text = card.cardName,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color.White,

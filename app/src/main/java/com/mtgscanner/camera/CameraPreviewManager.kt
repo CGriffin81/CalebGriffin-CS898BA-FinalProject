@@ -1,6 +1,7 @@
 package com.mtgscanner.camera
 
 import android.content.Context
+import android.util.Log
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
@@ -34,7 +35,7 @@ import java.util.concurrent.Executors
  */
 class CameraPreviewManager(
     private val context: Context,
-    private val lifecycleOwner: LifecycleOwner
+    private val lifecycleOwner: LifecycleOwner = context as LifecycleOwner
 ) {
     private var cameraProvider: ProcessCameraProvider? = null
     private var analysisExecutor: ExecutorService = Executors.newSingleThreadExecutor()
@@ -62,7 +63,7 @@ class CameraPreviewManager(
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
         
         cameraProviderFuture.addListener({
-            cameraProvider = cameraProviderFuture.result
+            cameraProvider = cameraProviderFuture.get()
             
             // Preview use case
             val preview = Preview.Builder().build().also {
@@ -95,6 +96,43 @@ class CameraPreviewManager(
         }, ContextCompat.getMainExecutor(context))
     }
 
+    fun setupCamera(
+        lifecycleOwner: LifecycleOwner,
+        previewView: PreviewView,
+        cameraSelector: CameraSelector = CameraSelector.DEFAULT_BACK_CAMERA,
+        onFrameAnalyzed: (analysisResult: String) -> Unit = {}
+    ) {
+        val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
+
+        cameraProviderFuture.addListener({
+            cameraProvider = cameraProviderFuture.get()
+
+            val preview = Preview.Builder().build().also {
+                it.setSurfaceProvider(previewView.surfaceProvider)
+            }
+
+            frameAnalyzer = CardFrameAnalyzer(onFrameAnalyzed)
+            val imageAnalysis = ImageAnalysis.Builder()
+                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                .build()
+                .also {
+                    it.setAnalyzer(analysisExecutor, frameAnalyzer!!)
+                }
+
+            try {
+                cameraProvider?.unbindAll()
+                cameraProvider?.bindToLifecycle(
+                    lifecycleOwner,
+                    cameraSelector,
+                    preview,
+                    imageAnalysis
+                )
+            } catch (exc: Exception) {
+                Log.e("CameraPreviewManager", "Camera binding failed", exc)
+            }
+        }, ContextCompat.getMainExecutor(context))
+    }
+
     /**
      * Release camera resources and clean up.
      * Should be called in Activity.onDestroy() or fragment lifecycle cleanup.
@@ -104,5 +142,9 @@ class CameraPreviewManager(
     fun releaseCamera() {
         cameraProvider?.unbindAll()
         analysisExecutor.shutdown()
+    }
+
+    fun stopCamera() {
+        releaseCamera()
     }
 }

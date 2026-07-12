@@ -80,7 +80,7 @@ class MainActivity : ComponentActivity() {
     private var errorMessage by mutableStateOf<String?>(null)
     private var isOffline by mutableStateOf(false)
     private var showLowConfidenceWarning by mutableStateOf(false)
-    private var lowConfidenceValue by mutableStateOf(0.0)
+    private var lowConfidenceValue by mutableStateOf(0f)
 
     /**
      * Initialize the MainActivity with all required components.

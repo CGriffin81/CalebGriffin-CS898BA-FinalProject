@@ -230,7 +230,7 @@ fun LowConfidenceWarning(
                 )
 
                 LinearProgressIndicator(
-                    progress = { confidence.toFloat() },
+                    progress = confidence.toFloat(),
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(8.dp),

@@ -47,7 +47,7 @@ class CardOcrProcessor {
         trackingId: Int
     ): DetectedCardText = withContext(Dispatchers.Default) {
         return@withContext try {
-            val image = InputImage.fromBitmap(cardBitmap)
+            val image = InputImage.fromBitmap(cardBitmap, 0)
             
             textRecognizer.process(image)
                 .addOnSuccessListener { recognizedText ->

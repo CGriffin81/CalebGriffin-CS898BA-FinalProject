@@ -20,7 +20,10 @@ data class DetectedCardText(
     val ocrConfidence: Float = 0f,
     val rawOcrText: String = "",
     val timestamp: Long = System.currentTimeMillis()
-)
+) {
+    val confidence: Float
+        get() = ocrConfidence
+}
 
 /**
  * Scryfall API card data model.
@@ -47,6 +50,8 @@ data class ScryfallCard(
     val rarity: String? = null,
     val typeLine: String? = null,
     val oracleText: String? = null,
+    val manaCost: String? = null,
+    val colorIdentity: List<String> = emptyList(),
     val colors: List<String> = emptyList(),
     val cmc: Float = 0f,
     val imageUris: ImageUris? = null,
@@ -72,6 +77,8 @@ data class ScryfallCard(
         val borderCrop: String? = null
     )
 }
+
+typealias UserAction = CardVerification.UserAction
 
 /**
  * Local collection card entity stored in Room database.

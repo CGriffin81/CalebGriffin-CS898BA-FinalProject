@@ -264,9 +264,9 @@ class ScryfallApiClient {
                 rarity = rarity,
                 typeLine = type_line,
                 manaCost = mana_cost,
-                cmc = cmc,
-                colors = colors,
-                colorIdentity = color_identity,
+                cmc = cmc?.toFloat() ?: 0f,
+                colors = colors ?: emptyList(),
+                colorIdentity = color_identity ?: emptyList(),
                 imageUris = image_uris?.let {
                     ScryfallCard.ImageUris(
                         small = it.small,
@@ -274,7 +274,7 @@ class ScryfallApiClient {
                         large = it.large
                     )
                 },
-                scryfallUri = scryfall_uri
+                scryfallUri = scryfall_uri ?: ""
             )
         } catch (e: Exception) {
             Log.e(TAG, "Failed to convert card response: ${e.message}", e)

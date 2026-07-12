@@ -136,12 +136,12 @@ class AppNavigator {
         cardData: CardVerification,
         errorMessage: String? = null,
         isOffline: Boolean = false,
-        ocrConfidence: Double = 0.0
+        ocrConfidence: Float = 0f
     ) {
         val verificationWithErrorState = cardData.copy(
             errorMessage = errorMessage,
             isOffline = isOffline,
-            ocrConfidence = ocrConfidence.toFloat()
+            ocrConfidence = ocrConfidence
         )
         navigateTo(AppScreen.VERIFICATION, verificationWithErrorState)
     }

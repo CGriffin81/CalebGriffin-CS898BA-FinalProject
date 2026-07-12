@@ -2,6 +2,7 @@ package com.mtgscanner.ui
 
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -136,17 +137,17 @@ fun VerificationScreen(
                         color = Color.Gray
                     )
                     Text(
-                        text = "Card Name: ${detectedText?.cardName ?: "Unknown"}",
+                        text = "Card Name: ${detectedText.cardName}",
                         fontSize = 14.sp,
                         color = Color.Black
                     )
                     Text(
-                        text = "Set Code: ${detectedText?.setCode ?: "Unknown"}",
+                        text = "Set Code: ${detectedText.setCode}",
                         fontSize = 14.sp,
                         color = Color.Black
                     )
                     Text(
-                        text = "Collector #: ${detectedText?.collectorNumber ?: "Unknown"}",
+                        text = "Collector #: ${detectedText.collectorNumber}",
                         fontSize = 14.sp,
                         color = Color.Black
                     )
@@ -307,8 +308,10 @@ fun VerificationScreen(
         // Low Confidence Warning dialog
         if (showLowConfidenceDialog) {
             LowConfidenceWarning(
-                confidence = ocrConfidence,
-                onDismiss = { showLowConfidenceDialog = false },
+                detectedName = detectedText.cardName,
+                confidence = ocrConfidence.toDouble(),
+                onContinue = { showLowConfidenceDialog = false },
+                onRetry = { showLowConfidenceDialog = false },
                 modifier = Modifier.align(Alignment.Center)
             )
         }

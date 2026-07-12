@@ -16,8 +16,8 @@ import android.util.Log
  * @param onFrameAnalysis Callback invoked with detection count after each frame analysis
  */
 class DetectionPipeline(
-    private val onCardReady: (cardBitmap: Bitmap, trackingId: Int) -> Unit,
-    private val onFrameAnalysis: (detectionCount: Int) -> Unit
+    var onCardReady: (cardBitmap: Bitmap, trackingId: Int) -> Unit = { _, _ -> },
+    var onFrameAnalysis: (detectionCount: Int) -> Unit = { _ -> }
 ) {
 
     private val cardDetector = CardDetector()
