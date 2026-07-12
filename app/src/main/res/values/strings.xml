@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MTG Scanner</string>
+    <string name="camera_permission_denied">Camera permission is required to scan Magic cards.</string>
+    <string name="network_offline">No internet connection. Using offline database.</string>
+    <string name="scryfall_error">Failed to fetch card data from Scryfall. Check your connection.</string>
+    <string name="ocr_low_confidence">OCR confidence is low. Please try again with better lighting.</string>
+    <string name="card_not_found">Card not found in Scryfall database.</string>
+    <string name="loading">Loading...</string>
+    <string name="retry">Retry</string>
+    <string name="back">Back</string>
+    <string name="confirm">Confirm</string>
+    <string name="reject">Reject</string>
+    <string name="skip">Skip</string>
+</resources>

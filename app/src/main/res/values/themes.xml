@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Material3 Theme for MTG Scanner -->
+    <style name="Theme.MTGScanner" parent="android:Theme.Material.Light.NoActionBar">
+        <!-- Primary brand color -->
+        <item name="android:colorPrimary">@color/primary_blue</item>
+        <item name="android:colorPrimaryDark">@color/primary_dark_blue</item>
+        <item name="android:colorAccent">@color/secondary_cyan</item>
+
+        <!-- Status bar -->
+        <item name="android:statusBarColor">@color/primary_dark_blue</item>
+        <item name="android:windowLightStatusBar">false</item>
+
+        <!-- Window background -->
+        <item name="android:windowBackground">@color/white</item>
+
+        <!-- Text colors -->
+        <item name="android:textColorPrimary">@color/gray_dark</item>
+        <item name="android:textColorSecondary">@color/gray_medium</item>
+    </style>
+
+    <!-- Toolbar style -->
+    <style name="MTGScanner.ToolbarStyle" parent="Widget.AppCompat.ActionBar">
+        <item name="android:background">@color/primary_blue</item>
+        <item name="android:elevation">4dp</item>
+    </style>
+
+    <!-- Button style -->
+    <style name="MTGScanner.ButtonStyle" parent="Widget.AppCompat.Button.Colored">
+        <item name="android:background">@color/tertiary_green</item>
+        <item name="android:textColor">@color/white</item>
+    </style>
+
+    <!-- Error button style -->
+    <style name="MTGScanner.ButtonErrorStyle" parent="Widget.AppCompat.Button">
+        <item name="android:background">@color/error_red</item>
+        <item name="android:textColor">@color/white</item>
+    </style>
+</resources>

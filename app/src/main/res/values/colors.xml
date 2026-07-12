@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Primary Colors -->
+    <color name="primary_blue">#1976D2</color>
+    <color name="primary_dark_blue">#1565C0</color>
+
+    <!-- Secondary Colors -->
+    <color name="secondary_cyan">#00BCD4</color>
+    <color name="secondary_light_cyan">#80DEEA</color>
+
+    <!-- Tertiary Colors (Success Actions) -->
+    <color name="tertiary_green">#4CAF50</color>
+    <color name="tertiary_light_green">#81C784</color>
+
+    <!-- Error/Reject -->
+    <color name="error_red">#E53935</color>
+    <color name="error_light_red">#EF5350</color>
+
+    <!-- Neutral -->
+    <color name="white">#FFFFFF</color>
+    <color name="black">#000000</color>
+    <color name="gray_light">#F5F5F5</color>
+    <color name="gray_medium">#BDBDBD</color>
+    <color name="gray_dark">#424242</color>
+</resources>
