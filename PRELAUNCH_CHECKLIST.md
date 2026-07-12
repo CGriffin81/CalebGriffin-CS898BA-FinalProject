@@ -1,4 +1,4 @@
-# Pre-Launch Checklist
+git# Pre-Launch Checklist
 
 ## Build Environment Verification
 - [ ] JDK 8+ installed (verify: `java -version`)
