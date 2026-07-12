@@ -94,7 +94,15 @@ app/
    - `res/values/themes.xml`: Material3 theme styling
    - `MainActivity.kt` (WIRED): Complete app bootstrap with component initialization, permission handling, detection pipeline callback orchestration, lifecycle management
 
-12. **Integration Testing** (✓ Complete - 58 test cases)
+12. **Network Resilience & Caching** (✓ Complete)
+   - `network/NetworkResilience.kt`: NetworkStateManager (connectivity monitoring), RetryPolicy (exponential backoff 100ms→5s + ±10% jitter), retryableCall() wrapper
+   - `network/NetworkCacheManager.kt`: SharedPreferences offline cache (7-day TTL, search, bulk preload, stats)
+   - `network/ScryfallRepositoryResilience.kt`: Resilient repository with fallback chain (identity → fuzzy → search → cache), Result<T> ADT, network awareness
+
+13. **Error Handling UI** (✓ Complete)
+   - `ui/ErrorHandling.kt`: 6 Material3 error components (ErrorSnackbar, OfflineNotice, ErrorDialog, LowConfidenceWarning, LoadingOverlay, PermissionDeniedScreen)
+
+14. **Integration Testing** (✓ Complete - 58 test cases)
    - `test/detection/DetectionPipelineIntegrationTest.kt`: Detection, tracking, stability, multiple cards, duplicates, stale cleanup (7 tests)
    - `test/ocr/OcrPipelineIntegrationTest.kt`: Preprocessing, region extraction, field parsing, confidence, rotation, blank images (10 tests)
    - `test/matching/FuzzyMatchingIntegrationTest.kt`: Perfect matches, OCR noise, weighted scoring, filtering, ranking, Levenshtein (9 tests)
@@ -102,7 +110,7 @@ app/
    - `androidTest/EndToEndIntegrationTest.kt`: Full workflows (single card, multiple cards, rejection, quantity update, collection browsing) (6 tests)
    - `androidTest/ui/NavigationIntegrationTest.kt`: State transitions, data passing, UI interactions (15 tests)
 
-**Pipeline Flow:**
+**Pipeline Flow (with resilience):**
 ```
 Camera Frame (CameraX)
   ↓
@@ -114,11 +122,19 @@ CardTracker (3-frame stability + ID assignment)
   ↓
 OcrPipeline (Preprocessing + ML Kit + Regex)
   ↓
-ScryfallRepository (Network or Local Cache)
-  ↓ (FindCardCandidates: identity → fuzzy → search)
+NetworkStateManager (Check connectivity)
+  ↓ (if online)
+ScryfallRepositoryResilience (with retry + fallback)
+  ├─ RetryPolicy: Exponential backoff (100ms→5s, ±10% jitter)
+  ├─ Fallback chain: identity → fuzzy → search
+  └─ CacheHit/Error: SharedPreferences offline cache (7-day TTL)
+  ↓
 FuzzyCardMatcher (Levenshtein scoring vs Scryfall)
   ↓
 VerificationScreen (User confirm/reject/skip + quantity)
+  ├─ Show error UI on network failure (ErrorSnackbar, ErrorDialog)
+  ├─ Show OfflineNotice if using cache
+  └─ Show LowConfidenceWarning if OCR < threshold
   ↓
 ScannedCardDatabase (Room storage)
   ↓
@@ -126,10 +142,11 @@ CollectionScreen (Browse + Search + Filter)
 ```
 
 **Next Steps (Before Real-World Testing):**
-- Network resilience: Offline-first cache strategy (preload LEA/M21 sets), retry logic, rate limit handling
-- Error handling UI: Snackbar/Toast for permission denied, network offline, low OCR confidence, Scryfall errors
-- Perspective correction: CardDetector.perspectiveCorrect() homography transform for skewed cards
-- Data flow wiring: Connect screens to real components (currently templates), async coroutine management
-- Performance tuning: Background thread frame processing, cached OCR, connection pooling
-- Build & deploy: Run `./gradlew assembleDebug`, install APK on Samsung Galaxy S23, smoke test camera/detection/DB
-- Real-world testing: Scan binder pages with 9-12 cards, verify detection accuracy, OCR robustness, network fallback
+- Integrate ScryfallRepositoryResilience into MainActivity + VerificationScreen callbacks
+- Integrate NetworkStateManager + error UI components (OfflineNotice, ErrorSnackbar) into CameraScreen
+- Integrate LowConfidenceWarning into VerificationScreen when OCR confidence < 0.6
+- Preload common sets (LEA, M21, SLD) into cache during app first run
+- Test offline mode: disable network → verify cache fallback → verify error UI
+- Test retry logic: mock network timeouts → verify exponential backoff
+- Build & deploy: `./gradlew assembleDebug` → install APK on Samsung Galaxy S23
+- Real-world testing: Scan binder pages with 9-12 cards, verify detection/OCR/network resilience
