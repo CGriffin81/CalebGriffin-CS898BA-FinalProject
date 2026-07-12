@@ -1,13 +1,50 @@
-# Computer Vision Final Project
+# Real-Time MTG Scanner
 ## Caleb Griffin
 
 ### Overview
-The TCGPlayer's scanner does not work very well on my phone, which is a Samsung Galaxy S23. In the course of this project, I will produce a scanning application that will actually identify cards, more than one at a time and create a digital database of the cards in my posession. I will then be able to export my lists to include in other card management solutions, like Moxfield.com.  
-  
-I intend to perform a normal pipeline of segmentation, perspective correction, and then apply further segmentation to identify different sections of a Magic: The Gathering trading card. This data will then be compared to a publicly available database of Magic: The Gathering cards.  
-  
-Initial literature review shows a common approach of using Convolutional Neural Networks (CNNs) for optical card recognition. TCG Player uses a proprietary technology called Roca Vision to identify cards from several Trading Card Games, with Magic: The Gathering being one of them.  
-  
-Alternative approachs to card detection are Optical Character Recognition, which would identify cards based on the text present on the card or Preceptual Hashing, which takes an average hash of a card image and compares it to a known database of card hashes.
+This project will build a real-time Android scanner for Magic: The Gathering cards using CameraX. The goal is to identify and catalog several cards at once, even when a binder page shows 9 or 12 cards at a time. The app should support slow page-by-page scanning, verify each identified card with the user, and let the user enter quantity before storing the card in a local collection.
 
-The alternative approaches save computational time and effort, compared to a CNN approach, but are more limited in feature sets and detection capability. I will be using the CNN approach because I care more about accuracy and being able to scan multiple images simultaneously. I may also try to implement scans on images that are captured via video, allowing me to flip through a binder and capture every card in the binder without having to collect individual images.
+### Brief Literature Review
+The literature review points toward a pipeline built around mobile computer vision, OCR, and database-backed validation instead of a single end-to-end recognition model.
+
+- CameraX and ImageAnalysis support continuous camera frames, which is the right base for live scanning.
+- OCR, preprocessing, and perspective correction help clean up card text before identification.
+- Real-time tracking and duplicate detection help prevent the same card from being added multiple times while it stays visible in the camera stream.
+- Fuzzy matching against Scryfall helps turn imperfect OCR output into a valid card identity.
+- Room supports local catalog storage for scanned cards, quantities, and metadata.
+- Existing MTG scanners show the expected workflow: quick scanning, minimal friction, and collection management after recognition.
+- Performance optimization matters because the app must keep preview, detection, OCR, and cataloging responsive on a phone.
+
+### Target Workflow
+1. CameraX opens a live preview and analyzes frames.
+2. The app detects cards in the frame, including binder pages with multiple cards.
+3. Each detected card is cropped, perspective-corrected, and sent through OCR or matching logic.
+4. The app compares results against Scryfall data and picks the most likely card.
+5. A verification prompt appears for the user to confirm the card and enter quantity.
+6. The confirmed card is stored locally in Room and added to the catalog.
+
+### Proposed Directory Structure
+The codebase should stay organized by pipeline stage and Android layer.
+
+```text
+literature_review/
+	# Research notes and annotated reading summaries
+
+app/
+	src/main/java/<package>/
+		camera/
+		analysis/
+		detection/
+		ocr/
+		matching/
+		data/
+		ui/
+		model/
+		util/
+	src/main/res/
+	src/test/
+	src/androidTest/
+```
+
+### Current State
+The literature review and project scope are in place. Next work should focus on Android project scaffolding, CameraX preview and analysis setup, then the first detection and identification pipeline.
