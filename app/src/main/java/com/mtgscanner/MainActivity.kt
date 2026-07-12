@@ -28,9 +28,15 @@ import com.mtgscanner.detection.DetectionPipeline
 import com.mtgscanner.matching.FuzzyCardMatcher
 import com.mtgscanner.model.CardVerification
 import com.mtgscanner.model.ScannedCard
+import com.mtgscanner.network.NetworkCacheManager
+import com.mtgscanner.network.NetworkStateManager
+import com.mtgscanner.network.RetryPolicy
 import com.mtgscanner.network.ScryfallApiClient
-import com.mtgscanner.network.ScryfallRepository
+import com.mtgscanner.network.ScryfallRepositoryResilience
 import com.mtgscanner.ocr.OcrPipeline
+import com.mtgscanner.ui.ErrorSnackbar
+import com.mtgscanner.ui.LowConfidenceWarning
+import com.mtgscanner.ui.OfflineNotice
 import com.mtgscanner.ui.AppNavigator
 import com.mtgscanner.ui.AppRoot
 import com.mtgscanner.ui.theme.MTGScannerTheme
@@ -63,12 +69,18 @@ class MainActivity : ComponentActivity() {
     private lateinit var ocrPipeline: OcrPipeline
     private lateinit var fuzzyCardMatcher: FuzzyCardMatcher
     private lateinit var scryfallApiClient: ScryfallApiClient
-    private lateinit var scryfallRepository: ScryfallRepository
+    private lateinit var scryfallRepositoryResilience: ScryfallRepositoryResilience
+    private lateinit var networkStateManager: NetworkStateManager
+    private lateinit var networkCacheManager: NetworkCacheManager
     private lateinit var database: ScannedCardDatabase
 
     // UI state
     private var cameraPermissionGranted by mutableStateOf(false)
     private var isInitializing by mutableStateOf(true)
+    private var errorMessage by mutableStateOf<String?>(null)
+    private var isOffline by mutableStateOf(false)
+    private var showLowConfidenceWarning by mutableStateOf(false)
+    private var lowConfidenceValue by mutableStateOf(0.0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -79,10 +91,19 @@ class MainActivity : ComponentActivity() {
         database = ScannedCardDatabase.getInstance(this)
         Log.d(TAG, "Database initialized")
 
-        // Initialize network layer
+        // Initialize network layer with resilience components
         scryfallApiClient = ScryfallApiClient()
-        scryfallRepository = ScryfallRepository(scryfallApiClient, database)
-        Log.d(TAG, "Scryfall API client initialized")
+        networkStateManager = NetworkStateManager(this)
+        networkCacheManager = NetworkCacheManager(this)
+        val retryPolicy = RetryPolicy(maxRetries = 3, initialDelayMs = 100, maxDelayMs = 5000)
+        scryfallRepositoryResilience = ScryfallRepositoryResilience(
+            scryfallApiClient,
+            database,
+            networkCacheManager,
+            networkStateManager,
+            retryPolicy
+        )
+        Log.d(TAG, "Scryfall API client and resilience layer initialized")
 
         // Initialize detection pipeline components
         cardDetector = CardDetector()
@@ -181,7 +202,8 @@ class MainActivity : ComponentActivity() {
 
     /**
      * Wire DetectionPipeline.onCardReady callback to navigation and OCR pipeline.
-     * Orchestrates: Detection → OCR → Fuzzy matching → Scryfall lookup → Verification screen.
+     * Orchestrates: Detection → OCR → Fuzzy matching → Scryfall lookup (with resilience) → Verification screen.
+     * Handles Result<T> sealed type (Success/CacheHit/Error) and shows appropriate error UI.
      */
     private fun setupDetectionPipelineCallback(navigator: AppNavigator) {
         detectionPipeline.onCardReady = { cardBitmap, trackingId ->
@@ -193,8 +215,37 @@ class MainActivity : ComponentActivity() {
                     val detectedText = ocrPipeline.recognizeCard(cardBitmap, trackingId)
                     Log.d(TAG, "OCR result: ${detectedText.cardName} (confidence=${detectedText.confidence})")
 
-                    // Step 2: Fetch Scryfall candidates (network or cache)
-                    val scryfallCandidates = scryfallRepository.findCardCandidates(detectedText)
+                    // Step 1.5: Check OCR confidence and warn if low
+                    if (detectedText.confidence < 0.6) {
+                        Log.w(TAG, "Low OCR confidence: ${detectedText.confidence}")
+                        lowConfidenceValue = detectedText.confidence
+                        showLowConfidenceWarning = true
+                    }
+
+                    // Step 2: Fetch Scryfall candidates with resilience (network + retry + cache)
+                    val resultCandidates = scryfallRepositoryResilience.findCardCandidatesResilient(detectedText)
+                    
+                    val scryfallCandidates = when (resultCandidates) {
+                        is ScryfallRepositoryResilience.Result.Success -> {
+                            Log.d(TAG, "Scryfall lookup successful: ${resultCandidates.data.size} candidates")
+                            isOffline = false
+                            errorMessage = null
+                            resultCandidates.data
+                        }
+                        is ScryfallRepositoryResilience.Result.CacheHit -> {
+                            Log.w(TAG, "Scryfall cache hit: ${resultCandidates.message}")
+                            isOffline = true
+                            errorMessage = "Using offline cache"
+                            resultCandidates.data
+                        }
+                        is ScryfallRepositoryResilience.Result.Error -> {
+                            Log.e(TAG, "Scryfall lookup failed: ${resultCandidates.message}")
+                            errorMessage = resultCandidates.message
+                            isOffline = true
+                            resultCandidates.fallbackData ?: emptyList()
+                        }
+                    }
+
                     Log.d(TAG, "Found ${scryfallCandidates.size} Scryfall candidates")
 
                     // Step 3: Fuzzy matching
@@ -204,19 +255,24 @@ class MainActivity : ComponentActivity() {
                     )
                     Log.d(TAG, "Fuzzy matching produced ${matchCandidates.size} ranked candidates")
 
-                    // Step 4: Navigate to verification screen
+                    // Step 4: Navigate to verification screen with error/offline state
                     val cardVerification = CardVerification(
                         trackingId = trackingId,
                         detectedCardText = detectedText,
                         matchCandidates = matchCandidates,
                         userAction = com.mtgscanner.model.UserAction.PENDING
                     )
-                    navigator.navigateToVerification(cardVerification)
+                    navigator.navigateToVerification(
+                        cardVerification,
+                        errorMessage = errorMessage,
+                        isOffline = isOffline,
+                        ocrConfidence = detectedText.confidence
+                    )
 
                     Log.d(TAG, "Navigated to verification screen")
                 } catch (e: Exception) {
                     Log.e(TAG, "Error in card detection pipeline: ${e.message}", e)
-                    // Could show error message in UI here
+                    errorMessage = "Pipeline error: ${e.message}"
                 }
             }
         }

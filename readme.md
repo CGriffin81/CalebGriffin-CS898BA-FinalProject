@@ -142,9 +142,7 @@ CollectionScreen (Browse + Search + Filter)
 ```
 
 **Next Steps (Before Real-World Testing):**
-- Integrate ScryfallRepositoryResilience into MainActivity + VerificationScreen callbacks
-- Integrate NetworkStateManager + error UI components (OfflineNotice, ErrorSnackbar) into CameraScreen
-- Integrate LowConfidenceWarning into VerificationScreen when OCR confidence < 0.6
+- Register NetworkConnectivityReceiver to listen for network state changes in AndroidManifest
 - Preload common sets (LEA, M21, SLD) into cache during app first run
 - Test offline mode: disable network → verify cache fallback → verify error UI
 - Test retry logic: mock network timeouts → verify exponential backoff

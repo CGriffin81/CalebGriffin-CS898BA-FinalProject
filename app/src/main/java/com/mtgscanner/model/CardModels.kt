@@ -80,6 +80,7 @@ data class CardMatchCandidate(
 /**
  * User verification state during collection process.
  * User confirms a detected card and enters quantity before storage.
+ * Includes error state, offline status, and OCR confidence for resilient error handling.
  */
 data class CardVerification(
     val trackingId: Int,
@@ -88,7 +89,10 @@ data class CardVerification(
     val selectedCard: ScryfallCard? = null,
     val selectedQuantity: Int = 1,
     val verificationTimestamp: Long = System.currentTimeMillis(),
-    val userAction: UserAction = UserAction.PENDING
+    val userAction: UserAction = UserAction.PENDING,
+    val errorMessage: String? = null,
+    val isOffline: Boolean = false,
+    val ocrConfidence: Float = detectedCardText.ocrConfidence
 ) {
     enum class UserAction {
         PENDING,

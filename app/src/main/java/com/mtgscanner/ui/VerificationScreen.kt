@@ -21,6 +21,7 @@ import com.mtgscanner.model.*
  * VerificationScreen: User confirmation of detected card details.
  * Displays card image, name, set code, collector number, and allows quantity entry.
  * User can confirm, reject, or skip the card.
+ * Integrates error handling UI for network failures, offline mode, and low OCR confidence.
  *
  * @param cardVerification The card verification model with OCR output and match candidates
  * @param onConfirm Callback when user confirms the card with quantity
@@ -38,14 +39,33 @@ fun VerificationScreen(
 ) {
     var quantity by remember { mutableStateOf("1") }
     var selectedCandidate by remember { mutableStateOf<CardMatchCandidate?>(null) }
+    var showErrorSnackbar by remember { mutableStateOf(false) }
+    var showLowConfidenceDialog by remember { mutableStateOf(false) }
 
     val detectedText = cardVerification.detectedCardText
     val candidates = cardVerification.matchCandidates
+    val errorMessage = cardVerification.errorMessage
+    val isOffline = cardVerification.isOffline
+    val ocrConfidence = cardVerification.ocrConfidence
 
     // Auto-select top candidate if available
     LaunchedEffect(candidates) {
         if (candidates.isNotEmpty() && selectedCandidate == null) {
             selectedCandidate = candidates.first()
+        }
+    }
+
+    // Show error snackbar if error message exists
+    LaunchedEffect(errorMessage) {
+        if (errorMessage != null) {
+            showErrorSnackbar = true
+        }
+    }
+
+    // Show low confidence warning if OCR < 60%
+    LaunchedEffect(ocrConfidence) {
+        if (ocrConfidence < 0.6 && ocrConfidence > 0.0) {
+            showLowConfidenceDialog = true
         }
     }
 
@@ -62,6 +82,16 @@ fun VerificationScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            // Offline Notice (if using cache)
+            if (isOffline) {
+                OfflineNotice(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp)
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
             // Header
             Text(
                 text = "Verify Card",
@@ -104,10 +134,17 @@ fun VerificationScreen(
                         fontSize = 14.sp,
                         color = Color.Black
                     )
+                    
+                    // OCR Confidence with color coding
+                    val confColor = when {
+                        ocrConfidence >= 0.8 -> Color(0xFF4CAF50)  // Green
+                        ocrConfidence >= 0.6 -> Color(0xFFFFA726)  // Orange
+                        else -> Color(0xFFE53935)                   // Red
+                    }
                     Text(
-                        text = "Confidence: ${String.format("%.1f%%", (detectedText?.confidence ?: 0.0) * 100)}",
+                        text = "Confidence: ${String.format("%.1f%%", ocrConfidence * 100)}",
                         fontSize = 12.sp,
-                        color = Color.Gray,
+                        color = confColor,
                         fontWeight = FontWeight.SemiBold
                     )
                 }
@@ -136,7 +173,10 @@ fun VerificationScreen(
                 }
             } else {
                 Text(
-                    text = "No candidates matched. Review OCR results.",
+                    text = if (errorMessage != null)
+                        "No candidates matched: $errorMessage"
+                    else
+                        "No candidates matched. Review OCR results.",
                     fontSize = 14.sp,
                     color = Color.Red,
                     modifier = Modifier
@@ -206,12 +246,17 @@ fun VerificationScreen(
                         val qty = quantity.toIntOrNull() ?: 1
                         val scannedCard = selectedCandidate?.scryfallCard?.let { card ->
                             ScannedCard(
-                                name = card.name,
+                                scryfallId = card.id,
+                                cardName = card.name,
                                 setCode = card.setCode,
                                 collectorNumber = card.collectorNumber,
                                 quantity = qty,
+                                rarity = card.rarity,
+                                colors = card.colors.joinToString(","),
+                                typeLine = card.typeLine,
+                                oracleText = card.oracleText,
                                 imageUrl = card.imageUris?.normal,
-                                scannedAt = System.currentTimeMillis()
+                                scannedTimestamp = System.currentTimeMillis()
                             )
                         } ?: return@Button
                         onConfirm(scannedCard, qty)
@@ -228,6 +273,28 @@ fun VerificationScreen(
             }
 
             Spacer(modifier = Modifier.height(24.dp))
+        }
+
+        // Error Snackbar overlay (dismissible)
+        if (showErrorSnackbar && errorMessage != null) {
+            ErrorSnackbar(
+                message = errorMessage,
+                onDismiss = { showErrorSnackbar = false },
+                actionLabel = "Dismiss",
+                onActionClick = { showErrorSnackbar = false },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(16.dp)
+            )
+        }
+
+        // Low Confidence Warning dialog
+        if (showLowConfidenceDialog) {
+            LowConfidenceWarning(
+                confidence = ocrConfidence,
+                onDismiss = { showLowConfidenceDialog = false },
+                modifier = Modifier.align(Alignment.Center)
+            )
         }
     }
 }

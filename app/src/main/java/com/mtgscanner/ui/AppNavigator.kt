@@ -66,8 +66,18 @@ class AppNavigator {
         navigateTo(AppScreen.COLLECTION)
     }
 
-    fun navigateToVerification(cardData: CardVerification) {
-        navigateTo(AppScreen.VERIFICATION, cardData)
+    fun navigateToVerification(
+        cardData: CardVerification,
+        errorMessage: String? = null,
+        isOffline: Boolean = false,
+        ocrConfidence: Double = 0.0
+    ) {
+        val verificationWithErrorState = cardData.copy(
+            errorMessage = errorMessage,
+            isOffline = isOffline,
+            ocrConfidence = ocrConfidence.toFloat()
+        )
+        navigateTo(AppScreen.VERIFICATION, verificationWithErrorState)
     }
 
     fun returnToMain() {
