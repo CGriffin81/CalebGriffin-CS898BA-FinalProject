@@ -84,9 +84,17 @@ app/
    - `ui/AppNavigator.kt`: State machine for MAIN ↔ CAMERA ↔ VERIFICATION ↔ COLLECTION transitions
    - `ui/AppRoot.kt`: Navigation routing, MainMenuScreen landing page
    - `ui/theme/Theme.kt`: Material3 color scheme (primary: blue, secondary: cyan, tertiary: green, error: red)
-   - `MainActivity.kt`: Entry point, camera permissions, component initialization, lifecycle management
 
-11. **Integration Testing** (✓ Complete - 58 test cases)
+11. **Android Configuration & Build** (✓ Complete)
+   - `AndroidManifest.xml`: Permissions (CAMERA, INTERNET, READ_MEDIA_IMAGES), hardware features, MainActivity declaration, portrait lock
+   - `build.gradle.kts`: 40+ dependencies (CameraX, ML Kit, OpenCV, Room, Retrofit, Coil, Compose, Coroutines, test frameworks)
+   - `settings.gradle.kts`: Repository configuration (Google, Maven Central, JCenter)
+   - `res/values/strings.xml`: App strings (errors, permissions, actions)
+   - `res/values/colors.xml`: Material3 color palette
+   - `res/values/themes.xml`: Material3 theme styling
+   - `MainActivity.kt` (WIRED): Complete app bootstrap with component initialization, permission handling, detection pipeline callback orchestration, lifecycle management
+
+12. **Integration Testing** (✓ Complete - 58 test cases)
    - `test/detection/DetectionPipelineIntegrationTest.kt`: Detection, tracking, stability, multiple cards, duplicates, stale cleanup (7 tests)
    - `test/ocr/OcrPipelineIntegrationTest.kt`: Preprocessing, region extraction, field parsing, confidence, rotation, blank images (10 tests)
    - `test/matching/FuzzyMatchingIntegrationTest.kt`: Perfect matches, OCR noise, weighted scoring, filtering, ranking, Levenshtein (9 tests)
@@ -117,11 +125,11 @@ ScannedCardDatabase (Room storage)
 CollectionScreen (Browse + Search + Filter)
 ```
 
-**Next Steps:**
-- Android Manifest & Gradle configuration (dependencies: CameraX, ML Kit, OpenCV, Room, Retrofit, Coil)
-- Network connectivity & offline fallback handling
-- Perspective correction (homography) for improved OCR accuracy on skewed cards
-- Real-world testing on Samsung Galaxy S23 with Magic cards and binder pages
-- Parameter tuning (detection area/aspect-ratio thresholds, OCR confidence cutoffs, tracking timeout, fuzzy match score weights)
-- Bulk preload of common Magic sets (LEA, M21, etc.) for offline use
-- UI refinements and performance profiling
+**Next Steps (Before Real-World Testing):**
+- Network resilience: Offline-first cache strategy (preload LEA/M21 sets), retry logic, rate limit handling
+- Error handling UI: Snackbar/Toast for permission denied, network offline, low OCR confidence, Scryfall errors
+- Perspective correction: CardDetector.perspectiveCorrect() homography transform for skewed cards
+- Data flow wiring: Connect screens to real components (currently templates), async coroutine management
+- Performance tuning: Background thread frame processing, cached OCR, connection pooling
+- Build & deploy: Run `./gradlew assembleDebug`, install APK on Samsung Galaxy S23, smoke test camera/detection/DB
+- Real-world testing: Scan binder pages with 9-12 cards, verify detection accuracy, OCR robustness, network fallback
