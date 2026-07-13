@@ -3,7 +3,7 @@
 ## Build Environment Verification
 - [ ] JDK 21 installed or Android Studio JBR available (verify: `java -version`)
 - [ ] Android SDK installed with API 34 (verify: `sdkmanager --list_installed` )
-- [ ] Android NDK installed (for OpenCV)
+- [ ] Android NDK installed only if future native rebuilds are needed
 - [ ] Gradle wrapper available (verify: `./gradlew.bat -v`)
 - [ ] JAVA_HOME environment variable set to Android Studio JBR for builds
 - [ ] ANDROID_HOME environment variable set
@@ -18,14 +18,13 @@
 - [ ] Error handling composables integrated into VerificationScreen
 
 ## Dependency Verification
-- [ ] CameraX (core, camera2, lifecycle) — v1.3.0
-- [ ] ML Kit Text Recognition — v16.0.0
-- [ ] OpenCV Android SDK — v4.8.1
+- [ ] CameraX (core, camera2, camera-view, lifecycle) — v1.4.2
+- [ ] ML Kit Text Recognition (Play Services delivery) — v19.0.1
 - [ ] Room (runtime, ktx) — v2.6.1
 - [ ] Retrofit + Gson — v2.9.0
 - [ ] Coil (image loading) — v2.5.0
-- [ ] Jetpack Compose — v1.6.0
-- [ ] Material3 — v1.1.2
+- [ ] Jetpack Compose BOM — v2024.06.00
+- [ ] Material3 aligned through the Compose BOM
 - [ ] Kotlin Coroutines — v1.7.3
 - [ ] Test frameworks (JUnit, Espresso, Mockito) — latest
 
@@ -97,7 +96,6 @@
 ## Pre-Deployment APK Build
 - [ ] Stop old daemons: `./gradlew.bat --stop`
 - [ ] Set Java 21 (Android Studio JBR) for shell session
-- [ ] Optional: use `Build-Apk.ps1` for one-command build
 - [ ] Clean build directory: `./gradlew.bat clean`
 - [ ] Build debug APK: `./gradlew.bat assembleDebug`
 - [ ] Verify APK created at `app/build/outputs/apk/debug/app-debug.apk`
@@ -111,6 +109,7 @@
 - [ ] PermissionRequestScreen appears if permissions not granted
 - [ ] Permission grant successful
 - [ ] MainMenuScreen displays with "Start Scanning" and "View Collection" buttons
+- [ ] Fresh startup no longer throws the Compose `NoSuchMethodError`
 
 ## Runtime Verification (First Launch)
 - [ ] Database initialized (no crashes)
@@ -127,6 +126,7 @@
 - [ ] Battery charged (> 80%)
 - [ ] Network connection stable
 - [ ] Logcat monitoring ready: `adb logcat com.mtgscanner:V`
+- [ ] Device relaunch after Compose BOM alignment confirmed clean
 
 ---
 
@@ -135,9 +135,6 @@
 ```powershell
 # 1. Navigate to project
 Set-Location "D:\Workspace\CS898BA\CalebGriffin-CS898BA-FinalProject"
-
-# 1a. Optional: run the build script instead of manual wrapper steps
-.\Build-Apk.ps1
 
 # 2. Stop old daemons and force Java 21 (Android Studio JBR)
 .\gradlew.bat --stop

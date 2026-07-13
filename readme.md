@@ -87,7 +87,7 @@ app/
 
 11. **Android Configuration & Build** (✓ Complete)
    - `AndroidManifest.xml`: Permissions (CAMERA, INTERNET, READ_MEDIA_IMAGES), hardware features, MainActivity declaration, portrait lock
-   - `build.gradle.kts`: 40+ dependencies (CameraX, ML Kit, OpenCV, Room, Retrofit, Coil, Compose, Coroutines, test frameworks)
+   - `build.gradle.kts`: 40+ dependencies (CameraX 1.4.2, ML Kit Play Services OCR, Room, Retrofit, Coil, Compose BOM, Coroutines, test frameworks)
    - `settings.gradle.kts`: Repository configuration (Google, Maven Central, JCenter)
    - `res/values/strings.xml`: App strings (errors, permissions, actions)
    - `res/values/colors.xml`: Material3 color palette
@@ -217,7 +217,8 @@ The application is fully implemented with all 13 core components, complete error
 ### Build Notes
 - Build the app with `Build-Apk.ps1` or `./gradlew.bat`, not the system `gradle` command.
 - Use Android Studio JBR (`C:\Program Files\Android\Android Studio\jbr`) for builds.
-- The APK contains native ML Kit and OpenCV libraries, so test on 16 KB page-size devices before release.
-- For 16 KB page-size installs, the app uses compressed native library packaging (`useLegacyPackaging = true`) because current ML Kit and OpenCV prebuilts are not 16 KB aligned.
+- The APK contains native ML Kit libraries, so test on 16 KB page-size devices before release.
+- For 16 KB page-size installs, the app uses compressed native library packaging (`useLegacyPackaging = true`) because current native prebuilts are not 16 KB aligned.
+- Compose dependencies are aligned through the Compose BOM to avoid runtime method mismatches during startup.
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed testing procedures.
