@@ -5,7 +5,7 @@ param(
     [switch]$Clean = $true,
     [int]$MinimumFreeSpaceGB = 8,
     [switch]$Install,
-    [switch]$Launch,
+    [switch]$Launch
     [string]$ApplicationId = "com.mtgscanner",
     [string]$MainActivity = ".MainActivity",
     [string]$ApkPath = "app\build\outputs\apk\debug\app-debug.apk"
