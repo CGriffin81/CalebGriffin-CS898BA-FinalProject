@@ -48,7 +48,10 @@ android {
         kotlinCompilerExtensionVersion = "1.5.14"
     }
 
-    packagingOptions {
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
@@ -72,16 +75,15 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.8.1")
 
     // CameraX
-    implementation("androidx.camera:camera-core:1.3.0")
-    implementation("androidx.camera:camera-camera2:1.3.0")
-    implementation("androidx.camera:camera-lifecycle:1.3.0")
-    implementation("androidx.camera:camera-view:1.3.0")
+    implementation("androidx.camera:camera-core:1.4.2")
+    implementation("androidx.camera:camera-camera2:1.4.2")
+    implementation("androidx.camera:camera-lifecycle:1.4.2")
+    implementation("androidx.camera:camera-view:1.4.2")
 
-    // ML Kit Text Recognition
-    implementation("com.google.mlkit:text-recognition:16.0.0")
-
-    // OpenCV
-    implementation("org.openpnp:opencv:4.9.0-0")
+    // ML Kit Text Recognition (Play Services delivery for smaller APK/native footprint)
+    implementation("com.google.android.gms:play-services-mlkit-text-recognition:19.0.1") {
+        exclude(group = "com.google.android.odml", module = "image")
+    }
 
     // Room Database
     implementation("androidx.room:room-runtime:2.6.1")

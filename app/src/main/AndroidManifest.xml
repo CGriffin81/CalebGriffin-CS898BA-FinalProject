@@ -30,6 +30,10 @@
         android:theme="@style/Theme.MTGScanner"
         tools:targetApi="34">
 
+        <meta-data
+            android:name="com.google.mlkit.vision.DEPENDENCIES"
+            android:value="ocr" />
+
         <!-- MainActivity: Launcher activity -->
         <activity
             android:name=".MainActivity"

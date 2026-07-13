@@ -218,5 +218,6 @@ The application is fully implemented with all 13 core components, complete error
 - Build the app with `Build-Apk.ps1` or `./gradlew.bat`, not the system `gradle` command.
 - Use Android Studio JBR (`C:\Program Files\Android\Android Studio\jbr`) for builds.
 - The APK contains native ML Kit and OpenCV libraries, so test on 16 KB page-size devices before release.
+- For 16 KB page-size installs, the app uses compressed native library packaging (`useLegacyPackaging = true`) because current ML Kit and OpenCV prebuilts are not 16 KB aligned.
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed testing procedures.

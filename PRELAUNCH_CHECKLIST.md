@@ -97,6 +97,7 @@
 ## Pre-Deployment APK Build
 - [ ] Stop old daemons: `./gradlew.bat --stop`
 - [ ] Set Java 21 (Android Studio JBR) for shell session
+- [ ] Optional: use `Build-Apk.ps1` for one-command build
 - [ ] Clean build directory: `./gradlew.bat clean`
 - [ ] Build debug APK: `./gradlew.bat assembleDebug`
 - [ ] Verify APK created at `app/build/outputs/apk/debug/app-debug.apk`
@@ -134,6 +135,9 @@
 ```powershell
 # 1. Navigate to project
 Set-Location "D:\Workspace\CS898BA\CalebGriffin-CS898BA-FinalProject"
+
+# 1a. Optional: run the build script instead of manual wrapper steps
+.\Build-Apk.ps1
 
 # 2. Stop old daemons and force Java 21 (Android Studio JBR)
 .\gradlew.bat --stop
