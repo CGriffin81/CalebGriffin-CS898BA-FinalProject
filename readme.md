@@ -166,12 +166,27 @@ The application is fully implemented with all 13 core components, complete error
    - Runtime verification (first launch)
    - Critical success criteria
 
+3. **[Build-Apk.ps1](Build-Apk.ps1)** — Windows build script
+   - Stops old daemons
+   - Sets `JAVA_HOME` to Android Studio JBR
+   - Runs the project wrapper clean/build flow
+   - Checks for the debug APK after build
+
 ### Quick Start Deployment
 
-1. **Build APK:**
-   ```bash
-   cd CalebGriffin-CS898BA-FinalProject
-   gradle assembleDebug
+1. **Build APK on Windows:**
+   ```powershell
+   Set-Location "D:\Workspace\CS898BA\CalebGriffin-CS898BA-FinalProject"
+   .\Build-Apk.ps1
+   ```
+
+   Or, run the wrapper directly:
+   ```powershell
+   .\gradlew.bat --stop
+   $env:JAVA_HOME="C:\Program Files\Android\Android Studio\jbr"
+   $env:Path="$env:JAVA_HOME\bin;" + $env:Path
+   .\gradlew.bat clean
+   .\gradlew.bat assembleDebug
    ```
 
 2. **Install on Device:**
@@ -198,5 +213,10 @@ The application is fully implemented with all 13 core components, complete error
 - ✓ Performance baseline measurements
 - ✓ Error state handling
 - ✓ Collection browsing and search
+
+### Build Notes
+- Build the app with `Build-Apk.ps1` or `./gradlew.bat`, not the system `gradle` command.
+- Use Android Studio JBR (`C:\Program Files\Android\Android Studio\jbr`) for builds.
+- The APK contains native ML Kit and OpenCV libraries, so test on 16 KB page-size devices before release.
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed testing procedures.

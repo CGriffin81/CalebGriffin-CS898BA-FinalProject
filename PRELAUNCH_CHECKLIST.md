@@ -1,11 +1,11 @@
 # Pre-Launch Checklist
 
 ## Build Environment Verification
-- [ ] JDK 8+ installed (verify: `java -version`)
+- [ ] JDK 21 installed or Android Studio JBR available (verify: `java -version`)
 - [ ] Android SDK installed with API 34 (verify: `sdkmanager --list_installed` )
 - [ ] Android NDK installed (for OpenCV)
-- [ ] Gradle 7.0+ available (verify: `gradle -v`)
-- [ ] JAVA_HOME environment variable set
+- [ ] Gradle wrapper available (verify: `./gradlew.bat -v`)
+- [ ] JAVA_HOME environment variable set to Android Studio JBR for builds
 - [ ] ANDROID_HOME environment variable set
 
 ## Source Code Verification
@@ -169,5 +169,3 @@ adb logcat com.mtgscanner:V
 
 ✓ **All items checked** = Ready for real-world testing
 ✗ **Any item unchecked** = Resolve before deployment
-
-Generated: 2026-07-12 11:47 CST
