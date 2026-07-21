@@ -108,17 +108,22 @@ class CardTracker(
     }
 
     /**
-     * Calculate Euclidean distance between two card regions (centers).
-     * Used to match detections across frames - cards detected close to previous position are likely the same card.
+     * Calculate Euclidean distance between the centers of two card regions.
+     * Used to match detections across frames — cards detected at similar center positions
+     * are likely the same physical card.
      *
-     * @param region1 First card region (previous frame)
-     * @param region2 Second card region (current frame)
-     * @return Distance in pixels between region centers
+     * Uses [CardRegion.centerX] and [CardRegion.centerY] (center of bounding box)
+     * instead of top-left corner, preventing spurious new tracks when a card's
+     * detected bounding box changes size slightly between frames.
+     *
+     * @param region1 First card region (previous frame).
+     * @param region2 Second card region (current frame).
+     * @return Distance in pixels between region centers.
      */
     private fun positionDistance(region1: CardRegion, region2: CardRegion): Int {
-        val dx = abs(region1.x - region2.x)
-        val dy = abs(region1.y - region2.y)
-        return (kotlin.math.sqrt((dx * dx + dy * dy).toDouble())).toInt()
+        val dx = abs(region1.centerX - region2.centerX)
+        val dy = abs(region1.centerY - region2.centerY)
+        return kotlin.math.sqrt((dx * dx + dy * dy).toDouble()).toInt()
     }
 }
 

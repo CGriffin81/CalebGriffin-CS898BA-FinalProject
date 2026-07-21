@@ -140,6 +140,32 @@ class DetectionPipelineIntegrationTest {
         assertEquals("All 3 tracking IDs should be distinct", 3, ids.size)
     }
 
+    /**
+     * Verifies the P1-03 center-distance fix:
+     * Two CardRegions with the same center but different top-left coordinates
+     * (due to different bounding box sizes) should be treated as the same card.
+     */
+    @Test
+    fun testTracker_sameCenterDifferentBoundsKeepsSameId() {
+        // Region 1: 180x250 at (100, 100) → center = (190, 225)
+        val region1 = CardRegion(x = 100, y = 100, width = 180, height = 250, area = 45000)
+
+        // Region 2: 200x270 at (90, 90) → center = (190, 225) — same center!
+        val region2 = CardRegion(x = 90, y = 90, width = 200, height = 270, area = 54000)
+
+        val frame1 = cardTracker.updateTracks(listOf(region1))
+        val idFrame1 = frame1[0]!!
+
+        val frame2 = cardTracker.updateTracks(listOf(region2))
+        val idFrame2 = frame2[0]!!
+
+        assertEquals(
+            "Same center point should keep the same tracking ID regardless of bounding box size",
+            idFrame1,
+            idFrame2
+        )
+    }
+
     // ──────────────────────────────────────────────────────────────────────────
     // DetectionPipeline — wiring tests that don't need real card detection
     // ──────────────────────────────────────────────────────────────────────────
@@ -191,10 +217,10 @@ class DetectionPipelineIntegrationTest {
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    // Tests requiring real CardDetector — IGNORED until P1-03 is implemented
+    // CardDetector — now implemented (P1-03)
     // ──────────────────────────────────────────────────────────────────────────
 
-    @Ignore("CardDetector.detectCards() is a stub — enable after P1-03 is implemented")
+    @Ignore("Bitmap.createBitmap() requires Android runtime — move to androidTest for device execution")
     @Test
     fun testSingleCardDetection() {
         val bitmap = createCardOnBlackBackground(640, 480, cardWidth = 180f, cardHeight = 250f)
@@ -207,7 +233,7 @@ class DetectionPipelineIntegrationTest {
         assertTrue("Card aspect ratio should be 0.60–0.80", aspectRatio in 0.60f..0.80f)
     }
 
-    @Ignore("CardDetector.detectCards() is a stub — enable after P1-03 is implemented")
+    @Ignore("Bitmap.createBitmap() requires Android runtime — move to androidTest for device execution")
     @Test
     fun testMultipleCardDetection() {
         val bitmap = createMultipleCardsOnBlack(640, 480, cardCount = 4)
@@ -219,7 +245,7 @@ class DetectionPipelineIntegrationTest {
         )
     }
 
-    @Ignore("CardDetector.detectCards() is a stub — enable after P1-03 is implemented")
+    @Ignore("Bitmap.createBitmap() requires Android runtime — move to androidTest for device execution")
     @Test
     fun testStabilityViaProcessFrame() {
         val bitmap = createCardOnBlackBackground(640, 480, cardWidth = 180f, cardHeight = 250f)
@@ -233,7 +259,7 @@ class DetectionPipelineIntegrationTest {
         assertTrue("onCardReady should fire once card reaches 3-frame stability", stableCallbackFired)
     }
 
-    @Ignore("CardDetector.detectCards() is a stub — enable after P1-03 is implemented")
+    @Ignore("Bitmap.createBitmap() requires Android runtime — move to androidTest for device execution")
     @Test
     fun testDuplicatePrevention_sameCardNotProcessedTwice() {
         val bitmap = createCardOnBlackBackground(640, 480, cardWidth = 180f, cardHeight = 250f)
