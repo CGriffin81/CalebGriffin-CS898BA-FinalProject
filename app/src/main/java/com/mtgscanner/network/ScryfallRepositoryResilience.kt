@@ -136,8 +136,9 @@ class ScryfallRepositoryResilience(
                 return@withContext Result.CacheHit(cachedByName, "From cache")
             }
 
-            // ─── Check network availability ───
-            val isOnline = networkStateManager.isNetworkAvailable.value
+            // ─── Check network availability (re-check live, not stale StateFlow) ───
+            val isOnline = networkStateManager.isNetworkConnected()
+            Log.d(TAG, "Network check: isOnline=$isOnline")
             if (!isOnline) {
                 Log.w(TAG, "Offline: no local or cache results for '$cardName'")
                 return@withContext Result.Error("No internet and no cached cards", null)
@@ -193,7 +194,7 @@ class ScryfallRepositoryResilience(
      */
     suspend fun getCardByIdentityResilient(setCode: String, collectorNumber: String): Result<ScryfallCard> =
         withContext(Dispatchers.IO) {
-            if (!networkStateManager.isNetworkAvailable.value) {
+            if (!networkStateManager.isNetworkConnected()) {
                 // Try cache first (P4-02: case-insensitive set code comparison)
                 val cached = cacheManager.getAllCachedCards()
                     .find { it.setCode.equals(setCode, ignoreCase = true) && it.collectorNumber == collectorNumber }
@@ -238,7 +239,7 @@ class ScryfallRepositoryResilience(
         withContext(Dispatchers.Default) {
             Log.d(TAG, "Preloading set: $setCode")
 
-            if (!networkStateManager.isNetworkAvailable.value) {
+            if (!networkStateManager.isNetworkConnected()) {
                 return@withContext Result.Error("Cannot preload: no network")
             }
 

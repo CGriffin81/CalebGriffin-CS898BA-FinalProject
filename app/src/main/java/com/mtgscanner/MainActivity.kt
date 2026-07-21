@@ -230,7 +230,15 @@ class MainActivity : ComponentActivity() {
 
                     // Step 1: OCR recognition
                     val detectedText = ocrPipeline.recognizeCard(cardBitmap, trackingId)
-                    Log.d(TAG, "OCR result: ${detectedText.cardName} (confidence=${detectedText.ocrConfidence})")
+                    Log.d(TAG, "OCR result: '${detectedText.cardName}' (confidence=${detectedText.ocrConfidence})")
+
+                    // Guard: If OCR produced no usable card name, don't navigate.
+                    // Clear the processed card so detection can re-try on the next stable frame.
+                    if (detectedText.cardName.isBlank()) {
+                        Log.w(TAG, "OCR produced empty card name for trackingId=$trackingId — skipping verification")
+                        detectionPipeline.clearProcessedCards()
+                        return@launch
+                    }
 
                     // Step 1.5: Check OCR confidence and warn if low
                     if (detectedText.ocrConfidence < 0.6) {
@@ -272,6 +280,14 @@ class MainActivity : ComponentActivity() {
                     )
                     Log.d(TAG, "Fuzzy matching produced ${matchCandidates.size} ranked candidates")
 
+                    // Guard: If no candidates found at all, don't navigate to empty verification.
+                    // Clear processed cards so the same card region can be re-detected.
+                    if (matchCandidates.isEmpty() && scryfallCandidates.isEmpty()) {
+                        Log.w(TAG, "No candidates found for '${detectedText.cardName}' — retrying detection")
+                        detectionPipeline.clearProcessedCards()
+                        return@launch
+                    }
+
                     // Step 4: Navigate to verification screen with error/offline state
                     val cardVerification = CardVerification(
                         trackingId = trackingId,
@@ -290,6 +306,8 @@ class MainActivity : ComponentActivity() {
                 } catch (e: Exception) {
                     Log.e(TAG, "Error in card detection pipeline: ${e.message}", e)
                     errorMessage = "Pipeline error: ${e.message}"
+                    // On exception, allow re-detection of the same card
+                    detectionPipeline.clearProcessedCards()
                 }
             }
         }

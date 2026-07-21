@@ -31,25 +31,37 @@ class OcrPipeline(
         cardBitmap: Bitmap,
         trackingId: Int
     ): DetectedCardText {
+        Log.d("OcrPipeline", "recognizeCard called: trackingId=$trackingId, " +
+            "bitmap=${cardBitmap.width}x${cardBitmap.height}, " +
+            "config=${cardBitmap.config}, recycled=${cardBitmap.isRecycled}")
+
         return try {
             // Preprocess image for better OCR
             val preprocessed = preprocessor.preprocessForOcr(cardBitmap)
             
             // Run OCR on preprocessed image
             val result = ocrProcessor.processCardImage(preprocessed, trackingId)
+
+            Log.d("OcrPipeline", "Full-card OCR result: name='${result.cardName}' " +
+                "set='${result.setCode}' collector='${result.collectorNumber}' " +
+                "confidence=${result.ocrConfidence} rawLen=${result.rawOcrText.length}")
             
             // If single-pass OCR is weak, optionally try region-focused approach
             if (result.ocrConfidence < 0.6f) {
+                Log.d("OcrPipeline", "Confidence < 0.6, trying region-based fallback...")
                 val regionResult = recognizeByRegions(cardBitmap, trackingId)
+                Log.d("OcrPipeline", "Region OCR result: name='${regionResult.cardName}' " +
+                    "confidence=${regionResult.ocrConfidence}")
                 if (regionResult.ocrConfidence > result.ocrConfidence) {
-                    Log.d("OcrPipeline", "Region-based OCR improved confidence from ${result.ocrConfidence} to ${regionResult.ocrConfidence}")
+                    Log.d("OcrPipeline", "Region-based OCR improved confidence " +
+                        "${result.ocrConfidence} → ${regionResult.ocrConfidence}")
                     return regionResult
                 }
             }
             
             result.copy(trackingId = trackingId)
         } catch (e: Exception) {
-            Log.e("OcrPipeline", "OCR pipeline failed", e)
+            Log.e("OcrPipeline", "OCR pipeline EXCEPTION: ${e.javaClass.simpleName}: ${e.message}", e)
             DetectedCardText(
                 trackingId = trackingId,
                 cardName = "",

@@ -59,7 +59,8 @@ class DetectionPipeline(
 
                     Log.d(TAG, "Card ready: trackingId=$trackingId, " +
                         "region=${cardRegion.x},${cardRegion.y} ${cardRegion.width}x${cardRegion.height}, " +
-                        "aspect=${String.format("%.2f", cardRegion.aspectRatio)}")
+                        "aspect=${String.format("%.2f", cardRegion.aspectRatio)}, " +
+                        "cropBitmap=${cardBitmap.width}x${cardBitmap.height}")
 
                     onCardReady(cardBitmap, trackingId)
                     processedCards.add(trackingId)

@@ -52,8 +52,23 @@ class CardOcrProcessor {
         trackingId: Int
     ): DetectedCardText = withContext(Dispatchers.Default) {
         return@withContext try {
+            Log.d(TAG, "processCardImage: trackingId=$trackingId, " +
+                "bitmap=${cardBitmap.width}x${cardBitmap.height}")
+
             val image = InputImage.fromBitmap(cardBitmap, 0)
             val recognizedText = textRecognizer.process(image).await()
+
+            // Diagnostic: log what ML Kit returned
+            val blockCount = recognizedText.textBlocks.size
+            val lineCount = recognizedText.textBlocks.sumOf { it.lines.size }
+            val rawText = recognizedText.text
+            Log.d(TAG, "ML Kit returned: blocks=$blockCount, lines=$lineCount, " +
+                "rawLen=${rawText.length}, first100='${rawText.take(100).replace('\n', '|')}'")
+
+            if (rawText.isEmpty()) {
+                Log.w(TAG, "ML Kit returned EMPTY text for ${cardBitmap.width}x${cardBitmap.height} bitmap")
+                return@withContext DetectedCardText(trackingId = trackingId)
+            }
 
             // Use spatial parsing (P2-02) with image height for bounding box anchoring
             val result = parseCardTextWithBounds(recognizedText, cardBitmap.height)
@@ -65,7 +80,7 @@ class CardOcrProcessor {
 
             result
         } catch (e: Exception) {
-            Log.e(TAG, "OCR failed for trackingId=$trackingId: ${e.message}", e)
+            Log.e(TAG, "OCR EXCEPTION for trackingId=$trackingId: ${e.javaClass.simpleName}: ${e.message}", e)
             DetectedCardText(trackingId = trackingId)
         }
     }
