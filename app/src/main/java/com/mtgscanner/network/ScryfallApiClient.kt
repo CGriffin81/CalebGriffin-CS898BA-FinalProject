@@ -247,27 +247,39 @@ class ScryfallApiClient {
     }
 
     /**
-     * Convert Scryfall API response data class to domain model ScryfallCard.
-     * Bridges JSON deserialization layer with business logic.
-     * Handles type conversion, field mapping, and nested ImageUris structure.
+     * Convert Scryfall API response to domain model.
      *
-     * @receiver ScryfallCardResponse parsed from Scryfall API JSON
-     * @return ScryfallCard domain model, or null if conversion fails
+     * P4-01: Resolves oracle_text and imageUris from card_faces when top-level values
+     * are null (dual-faced cards, split cards, adventure cards).
+     *
+     * P4-02: Normalizes setCode to lowercase for consistent case handling throughout
+     * the application (cache lookups, collection queries, identity matching).
+     *
+     * @receiver ScryfallCardResponse parsed from Scryfall API JSON.
+     * @return ScryfallCard domain model, or null if conversion fails.
      */
     private fun ScryfallCardResponse.toDomainModel(): ScryfallCard? {
         return try {
+            // P4-01: Resolve image URIs — top-level for normal cards, first face for DFCs
+            val resolvedImageUris = image_uris ?: card_faces?.firstOrNull()?.image_uris
+
+            // P4-01: Resolve oracle text — top-level or combined from all faces
+            val resolvedOracleText = oracle_text
+                ?: card_faces?.mapNotNull { it.oracle_text }?.joinToString("\n//\n")
+
             ScryfallCard(
                 id = id,
                 name = name,
-                setCode = set.uppercase(),
+                setCode = set.lowercase(),  // P4-02: normalize to lowercase
                 collectorNumber = collector_number,
                 rarity = rarity,
                 typeLine = type_line,
+                oracleText = resolvedOracleText,
                 manaCost = mana_cost,
                 cmc = cmc?.toFloat() ?: 0f,
                 colors = colors ?: emptyList(),
                 colorIdentity = color_identity ?: emptyList(),
-                imageUris = image_uris?.let {
+                imageUris = resolvedImageUris?.let {
                     ScryfallCard.ImageUris(
                         small = it.small,
                         normal = it.normal,

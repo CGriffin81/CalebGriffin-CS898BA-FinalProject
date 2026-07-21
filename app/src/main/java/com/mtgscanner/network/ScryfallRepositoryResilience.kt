@@ -5,6 +5,7 @@ import com.mtgscanner.data.ScannedCardDatabase
 import com.mtgscanner.model.DetectedCardText
 import com.mtgscanner.model.ScryfallCard
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
 /**
@@ -67,41 +68,85 @@ class ScryfallRepositoryResilience(
 
     /**
      * Find card candidates with comprehensive resilience strategy.
-     * Executes in this order:
-     * 1. Check network availability; if offline, attempt cache lookup
-     * 2. Strategy 1 - Identity Lookup: If set code and collector number provided, try exact identity match with retries
-     * 3. Strategy 2 - Fuzzy Name: Try fuzzy name matching (e.g., "Black Lotus" finds "Black Lotus" variants)
-     * 4. Strategy 3 - General Search: Try general name search with top 10 results
-     * 5. Fallback - Cache: Search local cache if all network strategies fail
-     * 6. Error: Return error if both network and cache are exhausted
+     *
+     * Lookup order (P4-03: local-first, then network):
+     * 0. Normalize input identifiers (P4-02: lowercase set code, trim whitespace)
+     * 1. Check local collection (Room) — previously scanned cards (~1ms)
+     * 2. Check SharedPreferences cache — previously fetched Scryfall data
+     * 3. If offline, return cache result or error
+     * 4. Strategy 1 - Identity Lookup: set + collector number via /cards/{set}/{cn}
+     * 5. Strategy 2 - Fuzzy Name: /cards/named?fuzzy=
+     * 6. Strategy 3 - General Search: /cards/search?q=
+     * 7. Fallback - Cache search by name
+     * 8. Error if nothing found
+     *
      * Results are cached for offline use. Runs on Dispatchers.Default.
      *
-     * @param detectedText OCR-recognized card text containing name, set code, and collector number
-     * @return Result object: Success if found via network, CacheHit if found in cache, Error with optional fallback data
+     * @param detectedText OCR-recognized card text containing name, set code, and collector number.
+     * @return Result: Success (network), CacheHit (local), or Error.
      */
     suspend fun findCardCandidatesResilient(detectedText: DetectedCardText): Result<List<ScryfallCard>> =
         withContext(Dispatchers.Default) {
-            Log.d(TAG, "Finding candidates for: ${detectedText.cardName}")
+            // P4-02: Normalize identifiers at entry point
+            val cardName = detectedText.cardName.trim()
+            val setCode = detectedText.setCode.lowercase().trim()
+            val collectorNumber = detectedText.collectorNumber.trim()
 
-            // Check network status
-            val isOnline = networkStateManager.isNetworkAvailable.value
-            if (!isOnline) {
-                Log.w(TAG, "Offline mode: checking cache only")
-                val cachedCards = cacheManager.searchCardsByName(detectedText.cardName)
-                return@withContext if (cachedCards.isNotEmpty()) {
-                    Result.CacheHit(cachedCards, "Using cached cards (offline)")
-                } else {
-                    Result.Error("No internet and no cached cards", null)
+            Log.d(TAG, "Finding candidates for: '$cardName' set='$setCode' cn='$collectorNumber'")
+
+            // ─── P4-03: Check local collection FIRST (zero network cost) ───
+            if (cardName.length >= 3) {
+                try {
+                    val ownedCards = database.scannedCardDao()
+                        .searchByName("%${cardName}%")
+                        .first()
+                        .take(3)
+
+                    if (ownedCards.isNotEmpty()) {
+                        val fromCollection = ownedCards.mapNotNull { entity ->
+                            // Try to get full Scryfall data from cache, otherwise build from entity
+                            cacheManager.getCard(entity.scryfallId) ?: ScryfallCard(
+                                id = entity.scryfallId,
+                                name = entity.cardName,
+                                setCode = entity.setCode,
+                                collectorNumber = entity.collectorNumber,
+                                rarity = entity.rarity,
+                                typeLine = entity.typeLine,
+                                oracleText = entity.oracleText,
+                                imageUris = entity.imageUrl?.let {
+                                    ScryfallCard.ImageUris(normal = it)
+                                }
+                            )
+                        }
+                        if (fromCollection.isNotEmpty()) {
+                            Log.d(TAG, "Found ${fromCollection.size} in local collection")
+                            return@withContext Result.CacheHit(fromCollection, "From your collection")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Local collection lookup failed: ${e.message}")
+                    // Non-fatal — continue to cache/network
                 }
             }
 
-            // Strategy 1: Identity lookup (set + collector)
-            if (!detectedText.setCode.isNullOrEmpty() && !detectedText.collectorNumber.isNullOrEmpty()) {
+            // ─── Check SharedPreferences cache ───
+            val cachedByName = cacheManager.searchCardsByName(cardName)
+            if (cachedByName.isNotEmpty()) {
+                Log.d(TAG, "Found ${cachedByName.size} in cache for '$cardName'")
+                return@withContext Result.CacheHit(cachedByName, "From cache")
+            }
+
+            // ─── Check network availability ───
+            val isOnline = networkStateManager.isNetworkAvailable.value
+            if (!isOnline) {
+                Log.w(TAG, "Offline: no local or cache results for '$cardName'")
+                return@withContext Result.Error("No internet and no cached cards", null)
+            }
+
+            // ─── Strategy 1: Identity lookup (set + collector) ───
+            if (setCode.isNotEmpty() && collectorNumber.isNotEmpty()) {
                 val byIdentity = retryableCall(retryPolicy) {
-                    apiClient.getCardByIdentity(
-                        detectedText.setCode!!,
-                        detectedText.collectorNumber!!
-                    )
+                    apiClient.getCardByIdentity(setCode, collectorNumber)
                 }
                 if (byIdentity != null) {
                     cacheManager.saveCard(byIdentity)
@@ -110,22 +155,20 @@ class ScryfallRepositoryResilience(
                 }
             }
 
-            // Strategy 2: Fuzzy name match
-            val fuzzyMatches = retryableCall(retryPolicy) {
-                apiClient.getCardByFuzzyName(
-                    detectedText.cardName,
-                    detectedText.setCode
-                )
+            // ─── Strategy 2: Fuzzy name match ───
+            val fuzzySetCode = setCode.ifEmpty { null }
+            val fuzzyMatch = retryableCall(retryPolicy) {
+                apiClient.getCardByFuzzyName(cardName, fuzzySetCode)
             }
-            if (fuzzyMatches != null) {
-                cacheManager.saveCard(fuzzyMatches)
-                Log.d(TAG, "Found by fuzzy name: ${fuzzyMatches.name}")
-                return@withContext Result.Success(listOf(fuzzyMatches))
+            if (fuzzyMatch != null) {
+                cacheManager.saveCard(fuzzyMatch)
+                Log.d(TAG, "Found by fuzzy name: ${fuzzyMatch.name}")
+                return@withContext Result.Success(listOf(fuzzyMatch))
             }
 
-            // Strategy 3: General search
+            // ─── Strategy 3: General search ───
             val searchResults = retryableCall(retryPolicy) {
-                apiClient.searchCards(detectedText.cardName)
+                apiClient.searchCards(cardName)
             }
             if (searchResults != null && searchResults.isNotEmpty()) {
                 cacheManager.saveCards(searchResults.take(10))
@@ -133,14 +176,7 @@ class ScryfallRepositoryResilience(
                 return@withContext Result.Success(searchResults.take(10))
             }
 
-            // Strategy 4: Fallback to cache
-            val cachedCards = cacheManager.searchCardsByName(detectedText.cardName)
-            if (cachedCards.isNotEmpty()) {
-                Log.d(TAG, "No network results; falling back to ${cachedCards.size} cached cards")
-                return@withContext Result.CacheHit(cachedCards, "No network; using cached results")
-            }
-
-            Log.w(TAG, "No candidates found (network and cache)")
+            Log.w(TAG, "No candidates found for '$cardName' (all strategies exhausted)")
             return@withContext Result.Error("No candidates found", null)
         }
 
@@ -158,9 +194,9 @@ class ScryfallRepositoryResilience(
     suspend fun getCardByIdentityResilient(setCode: String, collectorNumber: String): Result<ScryfallCard> =
         withContext(Dispatchers.IO) {
             if (!networkStateManager.isNetworkAvailable.value) {
-                // Try cache first
+                // Try cache first (P4-02: case-insensitive set code comparison)
                 val cached = cacheManager.getAllCachedCards()
-                    .find { it.setCode == setCode && it.collectorNumber == collectorNumber }
+                    .find { it.setCode.equals(setCode, ignoreCase = true) && it.collectorNumber == collectorNumber }
                 return@withContext if (cached != null) {
                     Result.CacheHit(cached)
                 } else {
@@ -177,9 +213,9 @@ class ScryfallRepositoryResilience(
                 return@withContext Result.Success(card)
             }
 
-            // Fallback to cache
+            // Fallback to cache (P4-02: case-insensitive)
             val cached = cacheManager.getAllCachedCards()
-                .find { it.setCode == setCode && it.collectorNumber == collectorNumber }
+                .find { it.setCode.equals(setCode, ignoreCase = true) && it.collectorNumber == collectorNumber }
 
             return@withContext if (cached != null) {
                 Result.CacheHit(cached, "Network failed; using cache")
