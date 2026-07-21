@@ -6,7 +6,7 @@ A real-time Android scanner for Magic: The Gathering cards using CameraX. Identi
 
 ### Implementation Status — Updated 2026-07-21
 
-**Pipeline: Functional end-to-end.** All stages produce real data. No placeholder stubs remain.
+**Pipeline: Functional end-to-end.** All stages produce real data. No placeholder stubs remain. OCR diagnostic instrumentation active for set code/collector number investigation.
 
 ```
 CameraX (device-dependent resolution, KEEP_ONLY_LATEST)
@@ -16,9 +16,11 @@ CardFrameAnalyzer
 CardDetector (edge-based, adaptive 4× downscale, aspect 0.50–0.90, area 1.5–60%)
   ↓ CardRegion bounding boxes
 CardTracker (center-distance, frame-calibrated threshold, 2-frame stability)
-  ↓ Stable card bitmap
-OcrPipeline → CardOcrProcessor (ML Kit await(), spatial bounding box name extraction)
+  ↓ Expand 20% → Stable card bitmap (includes name + collector regions)
+OcrPipeline → CardOcrProcessor (ML Kit await(), spatial 20% name extraction)
+  ↓ extractSetCode (3 strategies) + extractCollectorNumber (fraction + standalone)
   ↓ DetectedCardText {name, setCode, collectorNumber, confidence}
+  ↓ If confidence < 0.6: region fallback (expansion-aware crop coordinates)
 ScryfallRepositoryResilience (local-first: Room → cache → identity → fuzzy → search)
   ↓ List<ScryfallCard>
 FuzzyCardMatcher (Levenshtein, 60/20/20 weighting, single-candidate preservation)
@@ -94,21 +96,21 @@ app/
 **Completed Components:**
 
 1. **Camera & Frame Analysis** (✓ Complete)
-   - `camera/CameraPreviewManager.kt`: CameraX lifecycle management, preview binding, ImageAnalysis with STRATEGY_KEEP_ONLY_LATEST backpressure
-   - `analysis/CardFrameAnalyzer.kt`: YUV→JPEG→Bitmap conversion, rotation handling
+   - `camera/CameraPreviewManager.kt`: CameraX lifecycle management, preview binding, ImageAnalysis with STRATEGY_KEEP_ONLY_LATEST backpressure, single-threaded executor with lifecycle cleanup
+   - `analysis/CardFrameAnalyzer.kt`: `imageProxy.toBitmap()` conversion with target rotation
 
 2. **Detection Pipeline** (✓ Complete)
-   - `detection/CardDetector.kt`: Otsu thresholding, morphological operations, contour detection, aspect-ratio & area filtering
-   - `detection/CardTracker.kt`: Frame-to-frame ID assignment, 3-frame stability enforcement, 30-second stale track cleanup
-   - `detection/DetectionPipeline.kt`: Orchestration layer, onCardReady callback, duplicate prevention via processedCards Set
+   - `detection/CardDetector.kt`: Edge-based detection (Sobel gradient), adaptive 4× downscale, flood-fill connected components, aspect-ratio (0.50–0.90) & area (1.5–60%) filtering
+   - `detection/CardTracker.kt`: Frame-to-frame ID assignment, frame-calibrated center-distance threshold, 2-frame stability enforcement, 30-second stale track cleanup
+   - `detection/DetectionPipeline.kt`: Orchestration layer, 20% bounding box expansion, onCardReady callback (owned by MainActivity), duplicate prevention via processedCards Set
 
 3. **Data Models** (✓ Complete)
    - `model/CardModels.kt`: DetectedCardText (OCR output), ScryfallCard (API model), ScannedCard (Room entity), CardMatchCandidate (fuzzy result), CardVerification (user action state)
 
 4. **Optical Character Recognition** (✓ Complete)
-   - `ocr/CardOcrProcessor.kt`: ML Kit Text Recognition, regex-based field extraction (name, set code, collector number), confidence scoring
-   - `ocr/OcrPreprocessor.kt`: CLAHE contrast enhancement, Gaussian blur, sharpening, region extraction (name/type/collector)
-   - `ocr/OcrPipeline.kt`: Full pipeline orchestration, fallback to region-based OCR on low confidence (<0.6)
+   - `ocr/CardOcrProcessor.kt`: ML Kit Text Recognition, spatial bounding box name extraction (20% threshold), 3-strategy set code extraction (legacy/modern/standalone), fraction-based collector number, confidence scoring with diagnostic instrumentation
+   - `ocr/OcrPreprocessor.kt`: Pass-through preprocessing, expansion-aware region extraction (accounts for 20% bounding box padding from detection)
+   - `ocr/OcrPipeline.kt`: Full pipeline orchestration, fallback to region-based OCR on low confidence (<0.6), ifEmpty preference for set code combination
 
 5. **Fuzzy Matching** (✓ Complete)
    - `matching/FuzzyCardMatcher.kt`: Levenshtein distance-based matching, weighted scoring (60% name, 20% set, 20% collector), filtering >0.5 threshold
@@ -263,5 +265,6 @@ The application is fully implemented with all 13 core components, complete error
 - The APK contains native ML Kit libraries, so test on 16 KB page-size devices before release.
 - For 16 KB page-size installs, the app uses compressed native library packaging (`useLegacyPackaging = true`) because current native prebuilts are not 16 KB aligned.
 - Compose dependencies are aligned through the Compose BOM to avoid runtime method mismatches during startup.
+- Unit tests use `testOptions { unitTests.isReturnDefaultValues = true }` to allow `android.util.Log` calls in production code without crashing JVM tests.
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed testing procedures.

@@ -1,5 +1,5 @@
 # MTG Scanner — Architecture & Runtime Behavior
-**Updated:** 2026-07-21 (post-runtime investigation)
+**Updated:** 2026-07-21 (OCR region extraction fix + diagnostic instrumentation)
 
 ---
 
@@ -38,7 +38,8 @@
 │  └─────────────────────────────────────────────────────────┘     │
 │                                                                   │
 │  IF stable AND not in processedCards:                             │
-│    → extractCardImage(bitmap, region)                             │
+│    → Expand bounding box by 20% (captures name + collector)      │
+│    → extractCardImage(bitmap, expandedRegion)                     │
 │    → onCardReady(cardBitmap, trackingId)  ←── OWNED BY MAIN     │
 │    → processedCards.add(trackingId)                               │
 │                                                                   │
@@ -55,7 +56,11 @@
 │    → CardOcrProcessor.processCardImage() [Dispatchers.Default]   │
 │      → ML Kit textRecognizer.process(image).await()              │
 │      → parseCardTextWithBounds() (spatial + regex)               │
+│        → extractCardNameSpatial() [20% threshold]                │
+│        → extractSetCode() [legacy → modern → standalone]         │
+│        → extractCollectorNumber() [fraction → standalone]        │
 │    → If confidence < 0.6: recognizeByRegions() fallback          │
+│      → OcrPreprocessor.extractCardRegions() [expansion-aware]    │
 │    Timing: ~80–200ms (single pass), ~240–600ms (with fallback)   │
 │                                                                   │
 │  Step 2: scryfallRepositoryResilience.findCardCandidatesResilient│
@@ -113,6 +118,7 @@ The Samsung Galaxy S23 delivers **2992×2992** square frames despite `setTargetR
 | Effective frame rate into pipeline | ~7–12fps |
 | Stability threshold | 2 frames (~150–300ms) |
 | Total time to "Card Ready" | ~300–600ms from card entering frame |
+| Bounding box expansion | 20% on all sides |
 
 ### Detection Algorithm
 Edge-based detection (not threshold-based). Finds card borders regardless of background brightness. Works on white desks, dark mats, and binder pages.
@@ -123,10 +129,30 @@ Key parameters:
 - Minimum area: 1.5% of frame
 - Fill ratio: >25% of bounding box
 - Dilation: 2 passes for gap closure
+- Expansion: 20% on all sides (captures name bar + collector line)
+
+### Bounding Box Expansion & Region Extraction
+
+The edge-based detection finds the card's **interior art area**. To capture name and collector text, the bounding box is expanded 20% on all sides:
+
+```
+Expanded bitmap layout (20% expansion):
+  0%–14.3%    = expansion padding (background)
+  14.3%–85.7% = actual card content
+  85.7%–100%  = expansion padding (background)
+```
+
+`OcrPreprocessor.extractCardRegions()` translates card-relative proportions to absolute bitmap coordinates using expansion-aware math.
+
+### OCR Extraction Strategies
+
+**Card Name:** Spatial (top 20% threshold) → fallback to first qualifying line.
+**Set Code:** Legacy `(LEA)` → Modern fraction-line token → Standalone 3-5 char token (bottom 3 lines).
+**Collector Number:** Fraction `NNN/NNN` bottom-up → Standalone digit in bottom half.
 
 ---
 
-## Runtime Defects Found (2026-07-21)
+## Runtime Defects Found & Fixed
 
 ### Defect 1: Callback Overwrite (FIXED)
 - **Symptom:** "Card Ready" fires but OCR never activates
@@ -147,6 +173,21 @@ Key parameters:
 - **Symptom:** Cards must be held extremely still for seconds
 - **Cause:** 3-frame requirement at ~7fps = ~430ms minimum. Combined with jitter, often took 2–3 seconds.
 - **Fix:** Reduced to 2-frame stability (~200–300ms).
+
+### Defect 5: Region crops missed card content (FIXED)
+- **Symptom:** `set=''`, `collector=''`, confidence stuck at 0.5. Region fallback produced `blocks=0, lines=0`.
+- **Cause:** `OcrPreprocessor.extractCardRegions()` used raw bitmap percentages assuming the bitmap was an exact card crop. With expansion padding, those coordinates cropped empty background.
+- **Fix:** Added expansion-aware coordinate translation. Expansion increased 15% → 20%.
+
+### Defect 6: Spatial name threshold too tight (FIXED)
+- **Symptom:** `extractCardNameSpatial()` returned empty, fell back to text-order
+- **Cause:** 12% threshold was below where the name appears in an expanded bitmap (~15-16%).
+- **Fix:** Increased threshold to 20%.
+
+### Defect 7: Set code concatenation bug (FIXED)
+- **Symptom:** Potential for `setCode = "GRNGRN"` in region fallback
+- **Cause:** `OcrPipeline.recognizeByRegions()` concatenated both region set codes.
+- **Fix:** Changed to `collectorResult.setCode.ifEmpty { nameResult.setCode }`.
 
 ---
 
@@ -185,6 +226,27 @@ Key parameters:
 
 5. **OCR is a one-shot operation, not per-frame.** After `onCardReady` fires, the pipeline should ideally stop processing frames until OCR completes. Currently it continues detecting (which wastes CPU but doesn't cause bugs since `processedCards` prevents re-fire).
 
+6. **Region extraction must account for crop context.** When the crop includes padding beyond the card border, region proportions must be translated from card-relative to bitmap-absolute coordinates. Narrow slivers (< 10% height) produce zero ML Kit text blocks.
+
+7. **Unit tests need `unitTests.isReturnDefaultValues = true`** when production code uses `android.util.Log`. Without this, `Log.d()` throws RuntimeException in JVM unit tests.
+
+---
+
+## Diagnostic Instrumentation (Active — Remove Before Release)
+
+Verbose logging is enabled for runtime debugging of set code and collector number extraction:
+
+| Component | What it logs |
+|---|---|
+| `parseCardTextWithBounds()` | Full OCR dump: every ML Kit line with bounding box coordinates |
+| `extractCardNameSpatial()` | Threshold value, candidate lines, selection reason |
+| `extractSetCode()` | Strategy-by-strategy trace with accept/reject reasoning |
+| `extractCollectorNumber()` | Fraction search trace, fallback match reporting |
+| `OcrPreprocessor.extractCardRegions()` | Crop coordinates and dimensions |
+| `OcrPipeline.recognizeByRegions()` | Region dimensions and individual OCR results |
+
+**Logcat filter:** `adb logcat -s CardOcrProcessor:D OcrPipeline:D OcrPreprocessor:D`
+
 ---
 
 ## Current Test Coverage
@@ -196,3 +258,13 @@ Key parameters:
 | `OcrPipelineIntegrationTest.kt` | 36 | Text parsing, confidence scoring, regex patterns, set codes |
 | `FuzzyMatchingIntegrationTest.kt` | 13 | Levenshtein, scoring, filtering, single-candidate preservation |
 | **Total** | **74** | **0 failures, 10 skipped (require Android runtime)** |
+
+---
+
+## Known Remaining Issues (Under Investigation)
+
+1. **Collector line visibility.** Diagnostic logging is active to determine whether the collector line reaches ML Kit or is cut off by the crop boundary. If 20% expansion is insufficient, further expansion or detection adjustment may be needed.
+
+2. **Power/toughness false match.** `extractCollectorNumber()` can match "6/6" (power/toughness) as a collector fraction if the real collector line is absent. Needs a guard rejecting fractions where both numbers are < 20.
+
+3. **Region fallback wasted cycles.** When full-card OCR gets a name (confidence 0.5) but not set/collector, the region fallback runs but may not help if the bottom of the card isn't in the crop. Consider skipping fallback and proceeding directly to Scryfall fuzzy name lookup when name confidence alone is high.
