@@ -1,83 +1,117 @@
-# MTG Scanner - Real-World Testing Deployment Guide
+# MTG Scanner - Deployment Guide
+
+**Updated:** 2026-07-21  
+**Pipeline Status:** ✓ Functional end-to-end  
+**Source:** 25 Kotlin files | **Tests:** 64 passing | **APK:** builds cleanly
+
+---
 
 ## Prerequisites
 
 ### Required Software
-- **Android Studio** (latest version) or **Android SDK Command Line Tools**
-- **Java Development Kit (JDK)** 8 or higher (recommend JDK 11+)
-- **Android SDK** (API 34, API 24+)
-- **Android NDK** (for OpenCV native libraries)
-- **Gradle** (7.0+, or use embedded gradle via Android Studio)
-- **adb (Android Debug Bridge)** for deployment
+- **Android Studio** (2024+) — provides JBR (Java 21) and SDK tools
+- **Android SDK** API 34, Build Tools, Platform Tools (adb)
+- **No NDK required** — detection uses pure Kotlin (no native libraries)
+
+### Build Environment
+- **JAVA_HOME:** `C:\Program Files\Android\Android Studio\jbr` (JBR 21)
+- **Gradle:** Use project wrapper (`.\gradlew.bat`) — do NOT use system `gradle`
+- **No OpenCV** — removed; detection uses Android-native Bitmap processing
 
 ### Target Device
-- **Samsung Galaxy S23** with Android 11+ (API 30+)
+- Any Android 7.0+ device (API 24+) with a rear camera
+- **Tested on:** Samsung Galaxy S23 (Android 14, API 34)
 - USB debugging enabled in Developer Options
-- USB connection to development machine
 
 ---
 
 ## Build Instructions
 
-### Option 1: Using Android Studio (Recommended)
+### Option 1: Build Script (Recommended)
 
-1. Open the project in Android Studio
-   ```bash
-   open -a "Android Studio" /path/to/CalebGriffin-CS898BA-FinalProject
-   ```
+```powershell
+Set-Location "D:\Workspace\CS898BA\CalebGriffin-CS898BA-FinalProject"
+.\Build-Apk.ps1 -Install -Launch
+```
 
-2. Wait for Gradle sync to complete (Android Studio will download dependencies automatically)
+This script:
+1. Sets JAVA_HOME to Android Studio JBR
+2. Stops old Gradle daemons
+3. Runs `clean` + `testDebugUnitTest` + `assembleDebug`
+4. Verifies APK exists
+5. Installs and launches (with `-Install -Launch` flags)
 
-3. Select **Build → Build Bundle(s) / APK(s) → Build APK(s)**
+### Option 2: Manual Build
 
-4. Monitor the Build console for completion
+```powershell
+Set-Location "D:\Workspace\CS898BA\CalebGriffin-CS898BA-FinalProject"
+$env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
+$env:Path = "$env:JAVA_HOME\bin;" + $env:Path
 
-5. APK will be generated at:
-   ```
-   app/build/outputs/apk/debug/app-debug.apk
-   ```
+.\gradlew.bat --stop
+.\gradlew.bat clean
+.\gradlew.bat testDebugUnitTest    # 64 tests, 0 failures
+.\gradlew.bat assembleDebug        # produces app-debug.apk
 
-### Option 2: Using Gradle Command Line
+# Verify
+Get-Item .\app\build\outputs\apk\debug\app-debug.apk
+```
 
-1. Ensure JAVA_HOME and ANDROID_HOME are set:
-   ```bash
-   # Windows
-   set JAVA_HOME=C:\Program Files\Java\jdk-11
-   set ANDROID_HOME=C:\Users\%USERNAME%\AppData\Local\Android\Sdk
-   
-   # macOS/Linux
-   export JAVA_HOME=/Library/Java/JavaVirtualMachines/jdk-11.jdk/Contents/Home
-   export ANDROID_HOME=$HOME/Library/Android/Sdk
-   ```
+### Option 3: Android Studio
 
-2. From project root, run:
-   ```bash
-   # Windows
-   gradlew.bat assembleDebug
-   
-   # macOS/Linux
-   ./gradlew assembleDebug
-   ```
-
-3. If gradlew is not available, install the wrapper:
-   ```bash
-   gradle wrapper --gradle-version 7.6
-   ```
-
-4. APK will be at:
-   ```
-   app/build/outputs/apk/debug/app-debug.apk
-   ```
+1. Open project in Android Studio
+2. Wait for Gradle sync to complete
+3. Run → app (select connected device)
 
 ---
 
-## Deployment to Samsung Galaxy S23
+## Deployment to Device
 
-### Step 1: Connect Device
+```bash
+# Verify device connected
+adb devices
 
-1. Connect Samsung Galaxy S23 via USB cable
-2. Verify connection with adb:
-   ```bash
+# Install APK
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+
+# Launch
+adb shell am start -n com.mtgscanner/.MainActivity
+
+# Monitor scanning pipeline
+adb logcat -s CardDetector:D DetectionPipeline:D CardOcrProcessor:D ScryfallRepositoryResilience:D CameraPreviewManager:D CardFrameAnalyzer:D
+```
+
+---
+
+## Verification After Install
+
+### First Launch
+1. App opens to MainMenuScreen with "Scan Cards" and "View Collection"
+2. Tap "Scan Cards" → permission dialog appears → grant camera access
+3. Camera preview loads, logcat shows frames being processed
+
+### Pipeline Verification (logcat)
+```
+D/CameraPreviewManager: Camera bound: resolution=1280x720, rotation=0
+D/CardFrameAnalyzer: Frame 100: avg conversion=8.3ms 1280x720
+D/DetectionPipeline: processFrame received: 1280x720
+```
+
+### Card Detection Verification
+1. Place a Magic card on a dark-colored surface
+2. Hold phone ~20–30cm above, pointed at card
+3. Wait 2–3 seconds for detection + OCR
+4. Verification screen appears with card name
+
+Expected logcat:
+```
+D/CardDetector: Detected 1 card region(s) in 1280x720 frame
+D/DetectionPipeline: Card ready: trackingId=0, area=45000
+D/CardOcrProcessor: OCR trackingId=0: name='Lightning Bolt' set='LEA' collector='102' confidence=1.0
+D/ScryfallRepositoryResilience: Found by identity: Lightning Bolt
+```
+
+---
    adb devices
    ```
    
