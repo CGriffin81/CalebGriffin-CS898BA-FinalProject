@@ -20,10 +20,7 @@ data class DetectedCardText(
     val ocrConfidence: Float = 0f,
     val rawOcrText: String = "",
     val timestamp: Long = System.currentTimeMillis()
-) {
-    val confidence: Float
-        get() = ocrConfidence
-}
+)
 
 /**
  * Scryfall API card data model.

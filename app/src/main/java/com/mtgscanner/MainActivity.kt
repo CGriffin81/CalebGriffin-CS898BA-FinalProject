@@ -230,12 +230,12 @@ class MainActivity : ComponentActivity() {
 
                     // Step 1: OCR recognition
                     val detectedText = ocrPipeline.recognizeCard(cardBitmap, trackingId)
-                    Log.d(TAG, "OCR result: ${detectedText.cardName} (confidence=${detectedText.confidence})")
+                    Log.d(TAG, "OCR result: ${detectedText.cardName} (confidence=${detectedText.ocrConfidence})")
 
                     // Step 1.5: Check OCR confidence and warn if low
-                    if (detectedText.confidence < 0.6) {
-                        Log.w(TAG, "Low OCR confidence: ${detectedText.confidence}")
-                        lowConfidenceValue = detectedText.confidence
+                    if (detectedText.ocrConfidence < 0.6) {
+                        Log.w(TAG, "Low OCR confidence: ${detectedText.ocrConfidence}")
+                        lowConfidenceValue = detectedText.ocrConfidence
                         showLowConfidenceWarning = true
                     }
 
@@ -283,7 +283,7 @@ class MainActivity : ComponentActivity() {
                         cardVerification,
                         errorMessage = errorMessage,
                         isOffline = isOffline,
-                        ocrConfidence = detectedText.confidence
+                        ocrConfidence = detectedText.ocrConfidence
                     )
 
                     Log.d(TAG, "Navigated to verification screen")

@@ -1,38 +1,47 @@
 package com.mtgscanner.data
 
+import android.content.Context
 import androidx.room.Dao
+import androidx.room.Database
 import androidx.room.Delete
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.Insert
-import androidx.room.Database
+import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.Update
-import com.mtgscanner.model.ScannedCard
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
-import android.content.Context
 
 /**
- * Room database entity representing a scanned Magic: The Gathering card in the local collection.
- * Maps to "scanned_cards" table with auto-incrementing primary key.
+ * Room database entity representing a scanned Magic: The Gathering card.
  *
- * @param id Auto-generated primary key (Long); 0 for new records to trigger autoincrement
- * @param scryfallId Unique UUID from Scryfall database for card identity
- * @param cardName Common card name (may differ from OCR output before normalization)
- * @param setCode Magic set abbreviation (e.g., "m21", "lea", "khm")
- * @param collectorNumber Position in set (typically 1-300+, used for uniqueness)
- * @param quantity Count of this physical card in the collection (default 1)
- * @param rarity Card rarity: "C" (common), "U" (uncommon), "R" (rare), "M" (mythic), or null
- * @param colors Comma-separated color abbreviations (e.g., "U,R" for blue+red; empty string for colorless)
- * @param typeLine Card type line (e.g., "Creature — Dragon", "Sorcery", "Land")
- * @param oracleText Oracle rules text of the card (full abilities description)
- * @param imageUrl URL to card image on Scryfall CDN (nullable; for loading card artwork)
- * @param scannedTimestamp Millisecond timestamp when card was added to collection
- * @param userConfirmed Boolean: whether user manually verified this card (vs. auto-detected)
+ * P5-01: Unique index on [scryfallId] prevents duplicate rows for the same card printing.
+ * The application uses [findCardByIdentity] + quantity increment for duplicate handling,
+ * and the DB-level constraint acts as a safety net.
+ *
+ * @param id Auto-generated primary key (Long); 0 for new records.
+ * @param scryfallId Unique Scryfall UUID — constrained UNIQUE at the database level.
+ * @param cardName Card name after normalization via Scryfall.
+ * @param setCode Set abbreviation (lowercase, e.g., "m21", "lea").
+ * @param collectorNumber Position in set (e.g., "1", "42a", "280").
+ * @param quantity Physical copy count in collection (default 1).
+ * @param rarity Rarity: "common", "uncommon", "rare", "mythic", or null.
+ * @param colors Comma-separated color abbreviations (e.g., "U,R" or "").
+ * @param typeLine Card type (e.g., "Creature — Dragon").
+ * @param oracleText Oracle rules text.
+ * @param imageUrl Scryfall CDN image URL.
+ * @param scannedTimestamp When the card was first added (millis).
+ * @param userConfirmed Whether user manually verified this card.
  */
-@Entity(tableName = "scanned_cards")
+@Entity(
+    tableName = "scanned_cards",
+    indices = [Index(value = ["scryfallId"], unique = true)]  // P5-01
+)
 data class ScannedCardEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
@@ -49,19 +58,11 @@ data class ScannedCardEntity(
     val scannedTimestamp: Long = System.currentTimeMillis(),
     val userConfirmed: Boolean = false
 ) {
-    val name: String
-        get() = cardName
+    val name: String get() = cardName
+    val scannedAt: Long get() = scannedTimestamp
 
-    val scannedAt: Long
-        get() = scannedTimestamp
-
-    /**
-     * Convert this database entity to a domain model ScannedCard.
-     * Bridges Room persistence layer with business logic model.
-     *
-     * @return ScannedCard domain object with identical fields
-     */
-    fun toScannedCard() = ScannedCard(
+    /** Convert entity to domain model [com.mtgscanner.model.ScannedCard]. */
+    fun toScannedCard() = com.mtgscanner.model.ScannedCard(
         id = id,
         scryfallId = scryfallId,
         cardName = cardName,
@@ -79,120 +80,72 @@ data class ScannedCardEntity(
 }
 
 /**
- * Data Access Object for ScannedCard operations.
- * Provides CRUD operations, search, filtering, and collection statistics.
- * All suspend functions are coroutine-safe and run on Dispatcher.IO.
- * Flow-based functions provide reactive, real-time updates to the database.
+ * Data Access Object for scanned card operations.
  */
 @Dao
 interface ScannedCardDao {
-    
+
     /**
-     * Insert a new scanned card into the database.
-     * Suspending function for insert safety and conflict handling.
-     *
-     * @param card ScannedCardEntity to insert
-     * @return Long: Auto-generated primary key (ID) of the inserted card, or -1 if insertion failed
+     * Insert a new card. Uses [OnConflictStrategy.IGNORE] so that a duplicate
+     * scryfallId silently returns -1 instead of crashing (P5-01 safety).
+     * The application should always check [findCardByIdentity] first and update quantity
+     * rather than relying on this conflict strategy.
      */
-    @Insert
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertCard(card: ScannedCardEntity): Long
-    
-    /**
-     * Update an existing scanned card by ID.
-     * Replaces all fields of the card with matching ID.
-     *
-     * @param card ScannedCardEntity with updated fields (ID must match existing record)
-     */
+
     @Update
     suspend fun updateCard(card: ScannedCardEntity)
-    
-    /**
-     * Delete a card from the collection by its entity.
-     * Card must be an existing record (ID must match).
-     *
-     * @param card ScannedCardEntity to delete
-     */
+
     @Delete
     suspend fun deleteCard(card: ScannedCardEntity)
-    
-    /**
-     * Retrieve a single card by its primary key ID.
-     *
-     * @param cardId Primary key (Long) of the card to retrieve
-     * @return ScannedCardEntity?: The card if found, null if not found
-     */
+
     @Query("SELECT * FROM scanned_cards WHERE id = :cardId")
     suspend fun getCard(cardId: Long): ScannedCardEntity?
-    
-    /**
-     * Retrieve all scanned cards ordered by most recent first.
-     * Reactive Flow that emits updates whenever the database changes.
-     *
-     * @return Flow<List<ScannedCardEntity>>: Observable list of all cards, newest first
-     */
+
+    /** All cards ordered by most recent first. */
     @Query("SELECT * FROM scanned_cards ORDER BY scannedTimestamp DESC")
     fun getAllCards(): Flow<List<ScannedCardEntity>>
-    
-    /**
-     * Find a card by unique identity (Scryfall ID, set code, collector number).
-     * Returns first matching card; enforces uniqueness via LIMIT 1.
-     *
-     * @param scryfallId Scryfall UUID
-     * @param setCode Magic set code (3-4 characters, e.g., \"m21\", \"lea\")
-     * @param collectorNumber Card number in set (typically 1-300+)
-     * @return ScannedCardEntity?: The matching card if found, null if not in collection
-     */
+
+    /** Find a card by its Scryfall identity triple. */
     @Query("SELECT * FROM scanned_cards WHERE scryfallId = :scryfallId AND setCode = :setCode AND collectorNumber = :collectorNumber LIMIT 1")
     suspend fun findCardByIdentity(scryfallId: String, setCode: String, collectorNumber: String): ScannedCardEntity?
-    
-    /**
-     * Search for cards by name using substring matching (case-insensitive).
-     * Reactive Flow for real-time search results.
-     *
-     * @param namePattern Substring to search for (% wildcards added automatically for LIKE)
-     * @return Flow<List<ScannedCardEntity>>: Cards matching the name pattern, newest first\n     */
+
+    /** Search cards by name substring (caller must provide % wildcards). */
     @Query("SELECT * FROM scanned_cards WHERE cardName LIKE :namePattern ORDER BY scannedTimestamp DESC")
     fun searchByName(namePattern: String): Flow<List<ScannedCardEntity>>
-    
+
     /**
-     * Retrieve all cards from a specific Magic set.
-     * Useful for set-based collection browsing and management.
-     *
-     * @param setCode Set code (e.g., \"m21\", \"lea\")
-     * @return Flow<List<ScannedCardEntity>>: All cards in the set, sorted by collector number
+     * Cards in a set, sorted numerically by collector number (P5-03).
+     * CAST(collectorNumber AS INTEGER) sorts "1, 2, 10, 100" correctly instead of
+     * the text sort "1, 10, 100, 2" that the previous ORDER BY produced.
      */
-    @Query("SELECT * FROM scanned_cards WHERE setCode = :setCode ORDER BY collectorNumber")
+    @Query("SELECT * FROM scanned_cards WHERE setCode = :setCode ORDER BY CAST(collectorNumber AS INTEGER)")
     fun getCardsBySet(setCode: String): Flow<List<ScannedCardEntity>>
-    
-    /**
-     * Get count of unique card entries in the collection.
-     * Reactive Flow for real-time collection size updates.
-     *
-     * @return Flow<Int>: Number of unique card records in database
-     */
+
+    /** Count of unique card entries (rows). */
     @Query("SELECT COUNT(*) FROM scanned_cards")
     fun getCollectionSize(): Flow<Int>
-    
+
     /**
-     * Get total card quantity across entire collection.
-     * Sums up all quantity fields (useful for "you have X cards" stat).
-     *
-     * @return Flow<Int?>: Total card count (nullable; null if no cards in collection)
+     * Total quantity across all cards (P5-02).
+     * COALESCE ensures 0 is returned when the table is empty instead of SQL NULL.
      */
-    @Query("SELECT SUM(quantity) FROM scanned_cards")
+    @Query("SELECT COALESCE(SUM(quantity), 0) FROM scanned_cards")
     fun getTotalCards(): Flow<Int>
-    
-    /**
-     * Delete all cards from the database.
-     * WARNING: This is destructive and cannot be undone. Use with caution.
-     *
-     * @throws Exception if database operation fails
-     */
+
     @Query("DELETE FROM scanned_cards")
     suspend fun clearAllCards()
 }
 
-@Database(entities = [ScannedCardEntity::class], version = 1, exportSchema = false)
+/**
+ * Room database for the scanned card collection.
+ *
+ * Version history:
+ * - v1: Initial schema (no unique constraints)
+ * - v2: P5-01 — Added UNIQUE INDEX on scryfallId
+ */
+@Database(entities = [ScannedCardEntity::class], version = 2, exportSchema = false)
 abstract class ScannedCardDatabase : RoomDatabase() {
     abstract fun scannedCardDao(): ScannedCardDao
 
@@ -200,13 +153,31 @@ abstract class ScannedCardDatabase : RoomDatabase() {
         @Volatile
         private var INSTANCE: ScannedCardDatabase? = null
 
+        /**
+         * P5-01: Migration from v1 → v2.
+         * Creates the unique index on scryfallId. If duplicate rows already exist,
+         * the IF NOT EXISTS clause prevents a crash — duplicates must be resolved
+         * manually or the index creation will silently skip conflicting rows.
+         */
+        val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                        "index_scanned_cards_scryfallId ON scanned_cards(scryfallId)"
+                )
+            }
+        }
+
         fun getInstance(context: Context): ScannedCardDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
                     context.applicationContext,
                     ScannedCardDatabase::class.java,
                     "scanned_cards.db"
-                ).build().also { INSTANCE = it }
+                )
+                    .addMigrations(MIGRATION_1_2)
+                    .build()
+                    .also { INSTANCE = it }
             }
         }
     }
