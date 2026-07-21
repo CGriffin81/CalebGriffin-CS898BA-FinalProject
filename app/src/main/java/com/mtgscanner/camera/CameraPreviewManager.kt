@@ -1,6 +1,7 @@
 package com.mtgscanner.camera
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.util.Log
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
@@ -15,73 +16,90 @@ import java.util.concurrent.Executors
 
 /**
  * Manages CameraX lifecycle binding, preview rendering, and frame analysis pipeline.
- * Handles camera setup, permission management, use case binding, and resource cleanup.
- * Coordinates between Compose UI (PreviewView), frame analysis (CardFrameAnalyzer),
- * and lifecycle management (ProcessCameraProvider).
  *
- * CameraX Architecture:
- * - ProcessCameraProvider: Singleton managing camera access and use case binding
- * - Preview: Displays live camera feed to user
- * - ImageAnalysis: Captures frames for card detection (STRATEGY_KEEP_ONLY_LATEST backpressure)
- * - CardFrameAnalyzer: Processes frames on background executor thread
+ * Coordinates between the Compose UI ([PreviewView]), frame analysis ([CardFrameAnalyzer]),
+ * and Android lifecycle management ([ProcessCameraProvider]).
+ *
+ * Architecture:
+ * - [ProcessCameraProvider]: Singleton managing camera access and use-case binding
+ * - [Preview]: Renders the live camera feed to the user
+ * - [ImageAnalysis]: Captures frames for card detection (STRATEGY_KEEP_ONLY_LATEST)
+ * - [CardFrameAnalyzer]: Converts YUV frames to RGB Bitmaps on a dedicated background thread
+ *
+ * Frame Delivery:
+ * Each processed frame is delivered as a [Bitmap] to the [onFrameReady] callback.
+ * The callback runs on the analysis executor thread — the consumer
+ * (typically [com.mtgscanner.detection.DetectionPipeline.processFrame]) must be thread-safe.
  *
  * Lifecycle:
- * - setupCamera(): Initialize camera on CameraProvider availability (async)
- * - releaseCamera(): Clean up camera and executor when activity destroyed
- * - Camera access restricted to back camera (DEFAULT_BACK_CAMERA selector)
+ * - [setupCamera]: Binds camera on [ProcessCameraProvider] availability (async)
+ * - [releaseCamera] / [stopCamera]: Unbinds all use cases and shuts down the executor
  *
- * @param context Android Context for camera access and executor setup
- * @param lifecycleOwner Activity/Fragment lifecycle for camera binding (typically MainActivity)
+ * @param context Android Context for camera access and executor setup.
+ * @param lifecycleOwner Activity/Fragment lifecycle for camera binding (typically MainActivity).
  */
 class CameraPreviewManager(
     private val context: Context,
     private val lifecycleOwner: LifecycleOwner = context as LifecycleOwner
 ) {
+    companion object {
+        private const val TAG = "CameraPreviewManager"
+    }
+
     private var cameraProvider: ProcessCameraProvider? = null
     private var analysisExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private var frameAnalyzer: CardFrameAnalyzer? = null
 
     /**
-     * Initialize camera, bind preview and frame analysis use cases.
-     * Async operation: fetches ProcessCameraProvider and binds to lifecycle.
-     * Sets up Preview for live display and ImageAnalysis for frame processing (KEEP_ONLY_LATEST backpressure).
+     * Initialize camera and bind preview + frame analysis use cases.
+     *
+     * This is an async operation: it requests the [ProcessCameraProvider] singleton and
+     * binds use cases once available. The preview is rendered to [previewView] and each
+     * analyzed frame is delivered as a [Bitmap] to [onFrameReady].
      *
      * Use Cases:
-     * - Preview: Renders camera frames to PreviewView in real-time
-     * - ImageAnalysis: Delivers frames to CardFrameAnalyzer on dedicated executor thread
-     *   - Backpressure strategy: KEEP_ONLY_LATEST drops old frames if analyzer is busy
-     *   - Executor: Single-threaded to ensure sequential frame processing
+     * - **Preview**: Renders camera frames to [PreviewView] in real-time
+     * - **ImageAnalysis**: Delivers frames to [CardFrameAnalyzer] on a dedicated executor
+     *   - Backpressure: KEEP_ONLY_LATEST — drops old frames if analyzer is busy
+     *   - Executor: Single-threaded for sequential frame processing
      *
-     * @param previewView Target Compose PreviewView for camera preview rendering
-     * @param onFrameAnalyzed Callback invoked with analysis result after each frame processed
-     * @throws Exception if camera binding fails (caught internally, logged, but not rethrown)
+     * @param previewView Target Compose [PreviewView] for camera preview rendering.
+     * @param onFrameReady Callback delivering each processed frame as an RGB [Bitmap].
+     *   Called on the analysis executor thread. Connect this to
+     *   [com.mtgscanner.detection.DetectionPipeline.processFrame] to activate the pipeline.
      */
     fun setupCamera(
         previewView: PreviewView,
-        onFrameAnalyzed: (analysisResult: String) -> Unit
+        onFrameReady: (frameBitmap: Bitmap) -> Unit
     ) {
+        // Shut down previous executor if camera is being re-initialized (prevents thread leak)
+        if (!analysisExecutor.isShutdown) {
+            analysisExecutor.shutdown()
+        }
+        analysisExecutor = Executors.newSingleThreadExecutor()
+
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
-        
+
         cameraProviderFuture.addListener({
             cameraProvider = cameraProviderFuture.get()
-            
-            // Preview use case
+
+            // Preview use case — renders live camera feed
             val preview = Preview.Builder().build().also {
                 it.setSurfaceProvider(previewView.surfaceProvider)
             }
-            
-            // ImageAnalysis use case for frame processing
-            frameAnalyzer = CardFrameAnalyzer(onFrameAnalyzed)
+
+            // ImageAnalysis use case — delivers frames to CardFrameAnalyzer
+            frameAnalyzer = CardFrameAnalyzer(onFrameReady)
             val imageAnalysis = ImageAnalysis.Builder()
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .build()
                 .also {
                     it.setAnalyzer(analysisExecutor, frameAnalyzer!!)
                 }
-            
-            // Select back camera
+
+            // Always use back camera for card scanning
             val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
-            
+
             try {
                 cameraProvider?.unbindAll()
                 cameraProvider?.bindToLifecycle(
@@ -90,18 +108,32 @@ class CameraPreviewManager(
                     preview,
                     imageAnalysis
                 )
+                Log.d(TAG, "Camera bound successfully")
             } catch (exc: Exception) {
-                // Handle camera binding error
+                Log.e(TAG, "Camera binding failed", exc)
             }
         }, ContextCompat.getMainExecutor(context))
     }
 
+    /**
+     * Overload accepting an explicit [LifecycleOwner] and optional [CameraSelector].
+     *
+     * @param lifecycleOwner Lifecycle to bind camera use cases to.
+     * @param previewView Target view for preview rendering.
+     * @param cameraSelector Which camera to use (default: back camera).
+     * @param onFrameReady Callback for processed frames (default: no-op).
+     */
     fun setupCamera(
         lifecycleOwner: LifecycleOwner,
         previewView: PreviewView,
         cameraSelector: CameraSelector = CameraSelector.DEFAULT_BACK_CAMERA,
-        onFrameAnalyzed: (analysisResult: String) -> Unit = {}
+        onFrameReady: (frameBitmap: Bitmap) -> Unit = {}
     ) {
+        if (!analysisExecutor.isShutdown) {
+            analysisExecutor.shutdown()
+        }
+        analysisExecutor = Executors.newSingleThreadExecutor()
+
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
 
         cameraProviderFuture.addListener({
@@ -111,7 +143,7 @@ class CameraPreviewManager(
                 it.setSurfaceProvider(previewView.surfaceProvider)
             }
 
-            frameAnalyzer = CardFrameAnalyzer(onFrameAnalyzed)
+            frameAnalyzer = CardFrameAnalyzer(onFrameReady)
             val imageAnalysis = ImageAnalysis.Builder()
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .build()
@@ -127,23 +159,28 @@ class CameraPreviewManager(
                     preview,
                     imageAnalysis
                 )
+                Log.d(TAG, "Camera bound successfully (explicit lifecycle)")
             } catch (exc: Exception) {
-                Log.e("CameraPreviewManager", "Camera binding failed", exc)
+                Log.e(TAG, "Camera binding failed", exc)
             }
         }, ContextCompat.getMainExecutor(context))
     }
 
     /**
      * Release camera resources and clean up.
-     * Should be called in Activity.onDestroy() or fragment lifecycle cleanup.
-     * Unbinds all use cases from ProcessCameraProvider and shuts down frame analysis executor.
-     * Critical for preventing memory leaks and ensuring camera is available for other apps.
+     *
+     * Unbinds all use cases from [ProcessCameraProvider] and shuts down the frame
+     * analysis executor. Must be called in Activity.onDestroy() or equivalent cleanup point
+     * to prevent memory leaks and ensure the camera is available for other apps.
      */
     fun releaseCamera() {
         cameraProvider?.unbindAll()
         analysisExecutor.shutdown()
     }
 
+    /**
+     * Alias for [releaseCamera]. Stops camera and releases resources.
+     */
     fun stopCamera() {
         releaseCamera()
     }

@@ -42,6 +42,8 @@ class DetectionPipeline(
      */
     fun processFrame(frameBitmap: Bitmap) {
         try {
+            Log.d("DetectionPipeline", "processFrame received: ${frameBitmap.width}x${frameBitmap.height}")
+
             // Detect cards in frame
             val detections = cardDetector.detectCards(frameBitmap)
             
