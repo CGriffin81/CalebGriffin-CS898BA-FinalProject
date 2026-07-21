@@ -103,6 +103,8 @@ dependencies {
     // Kotlin Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
+    // Coroutine bridge for Google Play Services Tasks (required for ML Kit await())
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.7.3")
 
     // Lifecycle
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
@@ -114,7 +116,6 @@ dependencies {
 
     // Testing - Unit Tests
     testImplementation("junit:junit:4.13.2")
-    testImplementation("androidx.test:core:1.5.1")
     testImplementation("org.mockito.kotlin:mockito-kotlin:5.1.0")
 
     // Testing - Android Instrumented Tests
