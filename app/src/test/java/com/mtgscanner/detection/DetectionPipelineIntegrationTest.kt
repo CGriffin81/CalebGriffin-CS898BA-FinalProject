@@ -84,7 +84,7 @@ class DetectionPipelineIntegrationTest {
         val frame1 = cardTracker.updateTracks(listOf(region1))
         val idFrame1 = frame1[0]!!
 
-        // 400px away — must not match the existing track (positionThreshold = 50px)
+        // 400px away — must not match the existing track (baseThreshold = 80px)
         val region2 = CardRegion(x = 400, y = 400, width = 180, height = 250, area = 45000)
         val frame2 = cardTracker.updateTracks(listOf(region2))
         val idFrame2 = frame2[0]!!
@@ -117,13 +117,12 @@ class DetectionPipelineIntegrationTest {
         val region = CardRegion(x = 100, y = 100, width = 180, height = 250, area = 45000)
         cardTracker.updateTracks(listOf(region))
 
-        // Feed 6 frames with an empty detection list — card disappears
-        // CardTracker removes tracks after > 5 consecutive misses
-        repeat(6) { cardTracker.updateTracks(emptyList()) }
+        // Feed 9 frames with an empty detection list — card disappears
+        // CardTracker removes tracks after > 8 consecutive misses
+        repeat(9) { cardTracker.updateTracks(emptyList()) }
 
         // The track should have been pruned; a new detection at the same position gets a new ID
         val newTracks = cardTracker.updateTracks(listOf(region))
-        // If no tracks are active, the new detection creates a new entry — this just must not crash
         assertTrue("Tracker must handle re-appearing detection gracefully", newTracks.isNotEmpty())
     }
 

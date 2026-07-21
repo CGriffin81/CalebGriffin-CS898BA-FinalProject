@@ -4,87 +4,83 @@ import android.graphics.Bitmap
 import android.util.Log
 
 /**
- * Orchestrates the complete detection pipeline: segmentation, frame-to-frame tracking, and OCR preparation.
- * Manages frame-by-frame analysis with stability enforcement to prevent duplicate OCR processing.
- * Only passes cards that have been detected stably (3+ frames) to the OCR pipeline.
+ * Orchestrates detection → tracking → OCR-readiness for each camera frame.
  *
- * Callbacks:
- * - onCardReady: Fired when a card reaches stability threshold, passed to OCR layer
- * - onFrameAnalysis: Fired after each frame with detection count for UI feedback
- *
- * @param onCardReady Callback invoked with (cardBitmap: Bitmap, trackingId: Int) when card is ready for OCR
- * @param onFrameAnalysis Callback invoked with detection count after each frame analysis
+ * Flow per frame:
+ * 1. Detect card regions via [CardDetector]
+ * 2. Track detections via [CardTracker] (frame-to-frame ID persistence)
+ * 3. When a track reaches 3-frame stability, extract the card image and fire [onCardReady]
+ * 4. Prune stale tracks and notify the UI via [onFrameAnalysis]
  */
 class DetectionPipeline(
     var onCardReady: (cardBitmap: Bitmap, trackingId: Int) -> Unit = { _, _ -> },
     var onFrameAnalysis: (detectionCount: Int) -> Unit = { _ -> }
 ) {
+    companion object {
+        private const val TAG = "DetectionPipeline"
+    }
 
     private val cardDetector = CardDetector()
-    private val cardTracker = CardTracker(
-        frameHistorySize = 10,
-        positionThreshold = 50
-    )
-    
-    private val processedCards = mutableSetOf<Int>()  // Tracking IDs already sent to OCR
+    private val cardTracker = CardTracker()
+    private val processedCards = mutableSetOf<Int>()
+    private var calibrated = false
+    private var frameCount = 0
 
     /**
-     * Process a single camera frame through the complete detection pipeline.
-     * Sequence:
-     * 1. Detect cards using OpenCV segmentation (Otsu + morphology + contours)
-     * 2. Track detections across frames and assign stable IDs
-     * 3. Extract card images and invoke onCardReady callback for stable detections
-     * 4. Clean up stale tracking data
-     * 5. Update UI with detection count
-     *
-     * @param frameBitmap Input RGB bitmap from camera CameraX analyzer
-     * @throws Exception if OpenCV processing fails (caught and logged)
+     * Process a single camera frame through detection + tracking.
      */
     fun processFrame(frameBitmap: Bitmap) {
         try {
-            Log.d("DetectionPipeline", "processFrame received: ${frameBitmap.width}x${frameBitmap.height}")
+            frameCount++
 
-            // Detect cards in frame
+            // Calibrate tracker threshold on first frame (adapts to actual resolution)
+            if (!calibrated) {
+                cardTracker.calibrateThreshold(frameBitmap.width, frameBitmap.height)
+                calibrated = true
+                Log.d(TAG, "Calibrated for ${frameBitmap.width}x${frameBitmap.height}")
+            }
+
+            // Log every 30th frame to avoid flooding logcat
+            if (frameCount % 30 == 1) {
+                Log.d(TAG, "Frame #$frameCount: ${frameBitmap.width}x${frameBitmap.height}, processedCards=${processedCards.size}")
+            }
+
+            // Step 1: Detect
             val detections = cardDetector.detectCards(frameBitmap)
-            
-            // Update tracking
+
+            // Step 2: Track
             val matchMap = cardTracker.updateTracks(detections)
-            
-            // Process stable detections
+
+            // Step 3: Fire callback for stable, unprocessed cards
             for ((detIdx, trackingId) in matchMap) {
                 if (trackingId !in processedCards && cardTracker.isStableDetection(trackingId)) {
-                    // Extract and prepare card image for OCR
                     val cardRegion = detections[detIdx]
                     val cardBitmap = cardDetector.extractCardImage(frameBitmap, cardRegion)
-                    
-                    // Perspective correction TODO
-                    // val correctedBitmap = cardDetector.perspectiveCorrect(cardBitmap, cardRegion.contour)
-                    
-                    // Pass to OCR pipeline
+
+                    Log.d(TAG, "Card ready: trackingId=$trackingId, " +
+                        "region=${cardRegion.x},${cardRegion.y} ${cardRegion.width}x${cardRegion.height}, " +
+                        "aspect=${String.format("%.2f", cardRegion.aspectRatio)}")
+
                     onCardReady(cardBitmap, trackingId)
                     processedCards.add(trackingId)
-                    
-                    Log.d("DetectionPipeline", "Card ready: trackingId=$trackingId, area=${cardRegion.area}")
                 }
             }
-            
-            // Clean up old tracks
+
+            // Step 4: Cleanup
             cardTracker.pruneStaleTracks()
-            
-            // Notify frame analysis result
             onFrameAnalysis(detections.size)
-            
+
         } catch (e: Exception) {
-            Log.e("DetectionPipeline", "Error processing frame", e)
+            Log.e(TAG, "Error processing frame #$frameCount: ${e.message}", e)
         }
     }
 
     /**
-     * Clear the set of processed card tracking IDs.
-     * Called when user confirms/rejects a batch of detected cards to allow re-scanning.
-     * Enables the same card to be processed again if it re-enters the camera frame.
+     * Clear processed card IDs — allows re-scanning of the same cards.
+     * Called on confirm, reject, skip, and back navigation.
      */
     fun clearProcessedCards() {
+        Log.d(TAG, "Cleared ${processedCards.size} processed card IDs")
         processedCards.clear()
     }
 }
