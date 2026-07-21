@@ -2,7 +2,50 @@
 ## Caleb Griffin
 
 ### Overview
-This project will build a real-time Android scanner for Magic: The Gathering cards using CameraX. The goal is to identify and catalog several cards at once, even when a binder page shows 9 or 12 cards at a time. The app should support slow page-by-page scanning, verify each identified card with the user, and let the user enter quantity before storing the card in a local collection.
+A real-time Android scanner for Magic: The Gathering cards using CameraX. Identifies and catalogs cards from binder pages showing 9–12 cards at a time. The app supports slow page-by-page scanning, verifies each identified card with the user, and stores confirmed cards with quantity in a local Room collection.
+
+### Implementation Status — Updated 2026-07-21
+
+**Pipeline: Functional end-to-end.** All stages produce real data. No placeholder stubs remain.
+
+```
+CameraX (1280×720, KEEP_ONLY_LATEST)
+  ↓ ImageProxy.toBitmap() — ~8ms/frame
+CardFrameAnalyzer
+  ↓ Bitmap delivered to detection
+CardDetector (flood-fill + aspect ratio 0.55–0.85 + min area 2%)
+  ↓ CardRegion bounding boxes
+CardTracker (center-distance matching, 3-frame stability)
+  ↓ Stable card bitmap
+OcrPipeline → CardOcrProcessor (ML Kit await(), spatial bounding box name extraction)
+  ↓ DetectedCardText {name, setCode, collectorNumber, confidence}
+ScryfallRepositoryResilience (local-first: Room → cache → identity → fuzzy → search)
+  ↓ List<ScryfallCard>
+FuzzyCardMatcher (Levenshtein, 60/20/20 weighting, P2-07 single-candidate preservation)
+  ↓ Ranked CardMatchCandidate list
+VerificationScreen (card image, OCR results, quantity entry)
+  ↓ User confirms
+saveCardToCollection() (validates scryfallId, deduplicates, increments quantity)
+  ↓
+Room Database (UNIQUE index on scryfallId, numeric collector sort)
+  ↓
+CollectionScreen (grid, search, filter by set, statistics)
+```
+
+**Build:** `BUILD SUCCESSFUL` — 0 errors, 0 warnings (2 CameraX deprecation notices)
+**Tests:** 64 unit tests, 0 failures, 10 skipped (require Android device)
+**APK:** `app/build/outputs/apk/debug/app-debug.apk` generates cleanly
+
+### Technology Stack
+- **Language:** Kotlin 1.9.24
+- **UI:** Jetpack Compose + Material3 (Compose BOM 2024.06.00)
+- **Camera:** CameraX 1.4.2
+- **OCR:** Google ML Kit Text Recognition (Play Services delivery)
+- **Database:** Room 2.6.1 with Flow-based reactive queries
+- **Network:** Retrofit 2.9.0 + OkHttp 4.11.0 → Scryfall API
+- **Image Loading:** Coil 2.5.0
+- **Coroutines:** kotlinx-coroutines 1.7.3 + play-services bridge
+- **Build:** AGP 8.2.2, compileSdk 34, minSdk 24, targetSdk 34
 
 ### Brief Literature Review
 The literature review points toward a pipeline built around mobile computer vision, OCR, and database-backed validation instead of a single end-to-end recognition model.
