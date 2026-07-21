@@ -70,11 +70,6 @@ fun AppRoot(
             AppScreen.CAMERA -> {
                 Box(modifier = Modifier.fillMaxSize()) {
                     CameraScreen(
-                        onCardDetected = { cardData ->
-                            if (cardData is CardVerification) {
-                                navigator.navigateToVerification(cardData)
-                            }
-                        },
                         cameraPreviewManager = cameraPreviewManager,
                         detectionPipeline = detectionPipeline
                     )

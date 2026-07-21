@@ -18,7 +18,7 @@ class CardTracker(
     private val baseThreshold: Int = 80
 ) {
     companion object {
-        private const val STABILITY_FRAMES = 3
+        private const val STABILITY_FRAMES = 2
         private const val MAX_MISSED_FRAMES = 8
         private const val STALE_TIMEOUT_MS = 30_000L
         /** Reference diagonal for threshold scaling (720p = 1280×720). */

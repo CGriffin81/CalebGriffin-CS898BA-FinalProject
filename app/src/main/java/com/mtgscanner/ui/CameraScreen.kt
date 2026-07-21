@@ -16,36 +16,38 @@ import com.mtgscanner.camera.CameraPreviewManager
 import com.mtgscanner.detection.DetectionPipeline
 
 /**
- * CameraScreen: Live camera preview with real-time card detection overlay.
+ * CameraScreen: Live camera preview with real-time card detection feedback.
  *
- * Connects the CameraX frame stream to the [DetectionPipeline] so that each analyzed
- * frame is passed through detection → tracking → OCR readiness checks.
+ * This composable is ONLY responsible for:
+ * 1. Binding the CameraX preview to the UI
+ * 2. Connecting frame delivery to [DetectionPipeline.processFrame]
+ * 3. Displaying detection count feedback to the user
  *
- * When a card reaches stability (3+ frames), [DetectionPipeline.onCardReady] fires and
- * this screen invokes [onCardDetected] to transition to the verification screen.
+ * It does NOT own the [DetectionPipeline.onCardReady] callback.
+ * That callback is owned exclusively by [MainActivity.setupDetectionPipelineCallback],
+ * which handles: OCR → Scryfall → FuzzyMatch → Navigate to Verification.
  *
- * @param onCardDetected Callback when a card is stable and ready for verification.
+ * Previous bug: This composable's LaunchedEffect overwrote onCardReady after
+ * MainActivity set it, causing OCR to never activate.
+ *
  * @param cameraPreviewManager Manages CameraX lifecycle and frame delivery.
  * @param detectionPipeline Orchestrates detection, tracking, and OCR preparation.
  * @param modifier Compose modifier for the root layout.
  */
 @Composable
 fun CameraScreen(
-    onCardDetected: (cardData: Any) -> Unit,
     cameraPreviewManager: CameraPreviewManager,
     detectionPipeline: DetectionPipeline,
     modifier: Modifier = Modifier
 ) {
-    var detectedCardCount by remember { mutableStateOf(0) }
-    var isProcessing by remember { mutableStateOf(false) }
+    // Detection count updated from onFrameAnalysis — NOT from onCardReady
+    var detectionCount by remember { mutableStateOf(0) }
 
-    // Wire the detection pipeline's "card ready" callback to navigate to verification.
-    // This is set once when the composable enters composition.
+    // Wire the frame analysis callback to update the UI detection counter.
+    // This does NOT touch onCardReady — that is owned by MainActivity.
     LaunchedEffect(Unit) {
-        detectionPipeline.onCardReady = { cardBitmap, trackingId ->
-            isProcessing = true
-            detectedCardCount += 1
-            onCardDetected(mapOf("bitmap" to cardBitmap, "trackingId" to trackingId))
+        detectionPipeline.onFrameAnalysis = { count ->
+            detectionCount = count
         }
     }
 
@@ -59,7 +61,6 @@ fun CameraScreen(
             modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
                 PreviewView(ctx).apply {
-                    // Connect frame delivery: CameraX → CardFrameAnalyzer → DetectionPipeline
                     cameraPreviewManager.setupCamera(
                         previewView = this,
                         onFrameReady = detectionPipeline::processFrame
@@ -68,15 +69,7 @@ fun CameraScreen(
             }
         )
 
-        // Detection overlay: shows tracked card count (placeholder for bounding box drawing)
-        DetectionOverlay(
-            modifier = Modifier
-                .fillMaxSize()
-                .align(Alignment.Center),
-            detectionPipeline = detectionPipeline
-        )
-
-        // Top status bar
+        // Top status bar with detection count
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -93,14 +86,14 @@ fun CameraScreen(
                 fontWeight = FontWeight.Bold
             )
             Text(
-                text = "Detected: $detectedCardCount",
-                color = Color.Cyan,
+                text = if (detectionCount > 0) "Cards in view: $detectionCount" else "Scanning...",
+                color = if (detectionCount > 0) Color.Cyan else Color.White.copy(alpha = 0.6f),
                 fontSize = 14.sp,
                 fontWeight = FontWeight.SemiBold
             )
         }
 
-        // Bottom status and control panel
+        // Bottom instruction panel
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -108,53 +101,21 @@ fun CameraScreen(
                 .padding(16.dp)
                 .align(Alignment.BottomCenter),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            if (isProcessing) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(32.dp),
+            Text(
+                text = "Hold card steady for recognition",
+                color = Color.White,
+                fontSize = 12.sp,
+                modifier = Modifier.fillMaxWidth()
+            )
+            if (detectionCount > 0) {
+                Text(
+                    text = "Detecting $detectionCount card region(s)...",
                     color = Color.Cyan,
-                    strokeWidth = 3.dp
-                )
-                Text(
-                    text = "Processing card...",
-                    color = Color.White,
-                    fontSize = 12.sp
-                )
-            } else {
-                Text(
-                    text = "Position card and align with binder page (9–12 cards)",
-                    color = Color.White,
-                    fontSize = 12.sp,
-                    modifier = Modifier.fillMaxWidth()
+                    fontSize = 11.sp
                 )
             }
         }
-    }
-}
-
-/**
- * DetectionOverlay: Displays detected and tracked card count in real-time.
- * Simplified version — in production, this would draw bounding box rectangles
- * using Canvas over the camera preview.
- */
-@Composable
-fun DetectionOverlay(
-    modifier: Modifier = Modifier,
-    @Suppress("UNUSED_PARAMETER") detectionPipeline: DetectionPipeline
-) {
-    val trackedCardsCount by remember { mutableStateOf(0) }
-
-    Box(modifier = modifier) {
-        Text(
-            text = "Tracked: $trackedCardsCount cards",
-            color = Color.Cyan,
-            fontSize = 12.sp,
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(8.dp)
-                .background(Color.Black.copy(alpha = 0.5f))
-                .padding(8.dp)
-        )
     }
 }

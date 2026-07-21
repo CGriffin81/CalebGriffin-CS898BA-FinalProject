@@ -9,19 +9,19 @@ A real-time Android scanner for Magic: The Gathering cards using CameraX. Identi
 **Pipeline: Functional end-to-end.** All stages produce real data. No placeholder stubs remain.
 
 ```
-CameraX (1280×720, KEEP_ONLY_LATEST)
-  ↓ ImageProxy.toBitmap() — ~8ms/frame
+CameraX (device-dependent resolution, KEEP_ONLY_LATEST)
+  ↓ ImageProxy.toBitmap() — ~15–30ms/frame
 CardFrameAnalyzer
   ↓ Bitmap delivered to detection
-CardDetector (flood-fill + aspect ratio 0.55–0.85 + min area 2%)
+CardDetector (edge-based, adaptive 4× downscale, aspect 0.50–0.90, area 1.5–60%)
   ↓ CardRegion bounding boxes
-CardTracker (center-distance matching, 3-frame stability)
+CardTracker (center-distance, frame-calibrated threshold, 2-frame stability)
   ↓ Stable card bitmap
 OcrPipeline → CardOcrProcessor (ML Kit await(), spatial bounding box name extraction)
   ↓ DetectedCardText {name, setCode, collectorNumber, confidence}
 ScryfallRepositoryResilience (local-first: Room → cache → identity → fuzzy → search)
   ↓ List<ScryfallCard>
-FuzzyCardMatcher (Levenshtein, 60/20/20 weighting, P2-07 single-candidate preservation)
+FuzzyCardMatcher (Levenshtein, 60/20/20 weighting, single-candidate preservation)
   ↓ Ranked CardMatchCandidate list
 VerificationScreen (card image, OCR results, quantity entry)
   ↓ User confirms
@@ -32,8 +32,8 @@ Room Database (UNIQUE index on scryfallId, numeric collector sort)
 CollectionScreen (grid, search, filter by set, statistics)
 ```
 
-**Build:** `BUILD SUCCESSFUL` — 0 errors, 0 warnings (2 CameraX deprecation notices)
-**Tests:** 64 unit tests, 0 failures, 10 skipped (require Android device)
+**Build:** `BUILD SUCCESSFUL` — 0 errors
+**Tests:** 74 unit tests, 0 failures, 10 skipped (require Android device)
 **APK:** `app/build/outputs/apk/debug/app-debug.apk` generates cleanly
 
 ### Technology Stack

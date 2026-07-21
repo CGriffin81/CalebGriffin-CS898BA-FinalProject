@@ -103,13 +103,9 @@ class DetectionPipelineIntegrationTest {
         val trackingId = t1[0]!!
         assertFalse("Not stable after 1 frame", cardTracker.isStableDetection(trackingId))
 
-        // Frame 2
+        // Frame 2 — should now reach stability (STABILITY_FRAMES = 2)
         cardTracker.updateTracks(listOf(region))
-        assertFalse("Not stable after 2 frames", cardTracker.isStableDetection(trackingId))
-
-        // Frame 3 — should reach the 3-frame threshold
-        cardTracker.updateTracks(listOf(region))
-        assertTrue("Should be stable after 3 frames", cardTracker.isStableDetection(trackingId))
+        assertTrue("Should be stable after 2 frames", cardTracker.isStableDetection(trackingId))
     }
 
     @Test
