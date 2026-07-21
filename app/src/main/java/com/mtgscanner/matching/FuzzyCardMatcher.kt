@@ -14,39 +14,48 @@ class FuzzyCardMatcher {
 
     /**
      * Match detected OCR card text against a list of Scryfall candidates and return ranked matches.
+     *
      * For each candidate, calculates a weighted composite score:
      * - nameScore (60%): Levenshtein similarity of card names (case-insensitive)
      * - setScore (20%): 1.0 if set code matches, 0.0 if provided and differs, 0.5 if not provided
      * - collectorScore (20%): 1.0 if collector number matches exactly, 0.0 if provided and differs, 0.5 if not provided
-     * Filters to matches with score > 0.5 and sorts in descending order by final score.
      *
-     * @param detectedText OCR output containing card name, set code, and collector number
-     * @param scryfallCandidates List of possible cards from Scryfall API to match against
-     * @return List of CardMatchCandidate objects sorted by match score (descending); empty if no candidates exceed threshold
+     * Filtering behavior (P2-07):
+     * - When candidates ≤ 3 (from Scryfall identity or fuzzy lookup): all candidates are preserved
+     *   regardless of score. Scryfall already pre-filtered these as the best matches — discarding
+     *   them due to noisy OCR causes false negatives.
+     * - When candidates > 3 (from general search): filters to score > 0.5 to avoid overwhelming
+     *   the user with unlikely matches.
+     *
+     * Results are always sorted by score descending (best match first).
+     *
+     * @param detectedText OCR output containing card name, set code, and collector number.
+     * @param scryfallCandidates List of possible cards from Scryfall API to match against.
+     * @return List of [CardMatchCandidate] sorted by match score (descending).
      */
     fun matchCard(
         detectedText: DetectedCardText,
         scryfallCandidates: List<ScryfallCard>
     ): List<CardMatchCandidate> {
-        return scryfallCandidates
+        val scored = scryfallCandidates
             .map { card ->
                 val nameScore = levenshteinSimilarity(
                     detectedText.cardName.lowercase(),
                     card.name.lowercase()
                 )
-                
+
                 val setScore = if (detectedText.setCode.isNotEmpty()) {
                     if (detectedText.setCode.equals(card.setCode, ignoreCase = true)) 1.0f else 0.0f
                 } else {
-                    0.5f  // Set not provided, reduce confidence slightly
+                    0.5f  // Set not provided, neutral contribution
                 }
-                
+
                 val collectorScore = if (detectedText.collectorNumber.isNotEmpty()) {
                     if (detectedText.collectorNumber == card.collectorNumber) 1.0f else 0.0f
                 } else {
                     0.5f
                 }
-                
+
                 // Weighted score: name is primary, set and collector are tiebreakers
                 val finalScore = (nameScore * 0.6f) + (setScore * 0.2f) + (collectorScore * 0.2f)
                 val reason = buildString {
@@ -54,15 +63,23 @@ class FuzzyCardMatcher {
                     if (detectedText.setCode.isNotEmpty()) append(", set:${detectedText.setCode}")
                     if (detectedText.collectorNumber.isNotEmpty()) append(", #${detectedText.collectorNumber}")
                 }
-                
+
                 CardMatchCandidate(
                     scryfallCard = card,
                     matchScore = finalScore,
                     matchReason = reason
                 )
             }
-            .filter { it.matchScore > 0.5f }  // Only keep reasonable matches
             .sortedByDescending { it.matchScore }
+
+        // P2-07: Only apply score filter when there are many candidates (search results).
+        // For 1–3 candidates (from identity or fuzzy lookup), Scryfall already identified
+        // the correct card — preserve all results regardless of local score.
+        return if (scryfallCandidates.size > 3) {
+            scored.filter { it.matchScore > 0.5f }
+        } else {
+            scored
+        }
     }
 
     /**

@@ -3,6 +3,7 @@ package com.mtgscanner.ocr
 import android.graphics.Bitmap
 import android.util.Log
 import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.Text
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import com.mtgscanner.model.DetectedCardText
@@ -12,21 +13,22 @@ import kotlinx.coroutines.withContext
 
 /**
  * Optical Character Recognition processor for Magic card images.
- * Uses Google ML Kit Text Recognition (Latin script optimized) to extract text from card images.
- * Parses raw OCR output using regex patterns to extract card fields (name, set code, collector number).
  *
- * Async bridge: Uses kotlinx-coroutines-play-services `Task.await()` to suspend the coroutine
- * until ML Kit completes recognition. This replaces the previous fire-and-forget
- * addOnSuccessListener pattern which returned an empty placeholder before OCR completed.
+ * Uses Google ML Kit Text Recognition (Latin script, on-device) to extract text from card images.
+ * Parses the recognized [Text] object using both spatial bounding boxes (P2-02) and regex
+ * patterns to extract card name, set code, and collector number.
  *
- * Confidence Scoring:
- * - Card name plausible (non-empty, contains letter, not all-digits): +0.5
- * - Set code found (2–5 alphanumeric chars): +0.25
- * - Collector number found (1–3 digits + optional letter suffix): +0.25
- * - Total: 0.0–1.0; values < 0.6 trigger region-specific fallback in OcrPipeline
+ * Name extraction (P2-02): Uses [Text.TextBlock.boundingBox] to find the text line whose
+ * top edge is within the upper 12% of the card image — the Magic card name region.
  *
- * @property textRecognizer ML Kit TextRecognizer singleton (on-device, no network required).
- *   Shared across calls — TextRecognizer is thread-safe and designed for reuse.
+ * Set code extraction (P2-04): Supports both legacy parenthesis format `(LEA)` and
+ * modern collector line format `042/274 R • M21`.
+ *
+ * Collector number extraction (P2-03): Searches from the bottom of the text upward,
+ * preferring the fraction format `NNN/NNN`.
+ *
+ * Confidence scoring (P2-05): Awards points only for plausible extractions —
+ * rejects numeric-only names, validates set code length, and collector number format.
  */
 class CardOcrProcessor {
 
@@ -37,18 +39,13 @@ class CardOcrProcessor {
     /**
      * Process a card image using ML Kit OCR and return structured card fields.
      *
-     * Uses [kotlinx.coroutines.tasks.await] to suspend the calling coroutine until ML Kit
-     * completes text recognition. The coroutine resumes with the recognized [com.google.mlkit.vision.text.Text]
-     * object, which is then parsed for card name, set code, and collector number.
+     * Uses spatial bounding boxes from the [Text] result to identify the card name
+     * by its position in the top region of the image (P2-02), rather than relying
+     * solely on text order.
      *
-     * Runs on [Dispatchers.Default] — ML Kit schedules its own work internally
-     * (typically to a background thread pool), so this dispatcher just ensures we
-     * are not blocking the main thread while awaiting the result.
-     *
-     * @param cardBitmap Cropped card image bitmap from the detection pipeline (RGB, variable size).
-     * @param trackingId Card tracking ID from the detection pipeline (for correlation in logs).
-     * @return [DetectedCardText] with extracted name, set code, collector number, confidence, and raw text.
-     *   On any exception, returns an empty [DetectedCardText] with `ocrConfidence = 0f`.
+     * @param cardBitmap Cropped card image from the detection pipeline (RGB, variable size).
+     * @param trackingId Card tracking ID for correlation in logs.
+     * @return [DetectedCardText] with extracted fields and confidence score.
      */
     suspend fun processCardImage(
         cardBitmap: Bitmap,
@@ -56,21 +53,15 @@ class CardOcrProcessor {
     ): DetectedCardText = withContext(Dispatchers.Default) {
         return@withContext try {
             val image = InputImage.fromBitmap(cardBitmap, 0)
-
-            // Suspend until ML Kit completes — replaces the broken addOnSuccessListener pattern.
-            // Task.await() is provided by kotlinx-coroutines-play-services.
             val recognizedText = textRecognizer.process(image).await()
 
-            val result = parseCardText(recognizedText.text).copy(trackingId = trackingId)
+            // Use spatial parsing (P2-02) with image height for bounding box anchoring
+            val result = parseCardTextWithBounds(recognizedText, cardBitmap.height)
+                .copy(trackingId = trackingId)
 
-            Log.d(
-                TAG,
-                "OCR trackingId=$trackingId: " +
-                    "name='${result.cardName}' " +
-                    "set='${result.setCode}' " +
-                    "collector='${result.collectorNumber}' " +
-                    "confidence=${result.ocrConfidence}"
-            )
+            Log.d(TAG, "OCR trackingId=$trackingId: name='${result.cardName}' " +
+                "set='${result.setCode}' collector='${result.collectorNumber}' " +
+                "confidence=${result.ocrConfidence}")
 
             result
         } catch (e: Exception) {
@@ -80,16 +71,86 @@ class CardOcrProcessor {
     }
 
     /**
-     * Parse raw OCR text into structured card fields.
+     * Parse recognized text using ML Kit's spatial bounding boxes (P2-02).
      *
-     * Splits on newlines, trims each line, and applies regex extraction for each field.
-     * The card name is assumed to be the first non-trivial line of text. The set code
-     * is searched using the legacy parenthesis pattern `(XXX)`. The collector number is
-     * searched from the bottom of the text upward, preferring the fraction format
-     * `NNN/NNN` which is the most reliable indicator of the collector line on modern cards.
+     * The card name is identified by finding the text line whose bounding box top edge
+     * is within the upper 12% of the image. This is far more reliable than using
+     * the first line of raw text, which may be a mana cost or art noise.
      *
-     * @param rawText Raw string from [com.google.mlkit.vision.text.Text.getText].
-     * @return [DetectedCardText] with `trackingId = -1` (caller sets the real ID via `.copy()`).
+     * Falls back to the raw-text `parseCardText()` logic for set code and collector number
+     * since those use regex patterns that work well on the flat text representation.
+     *
+     * @param recognizedText The [Text] object from ML Kit with spatial data.
+     * @param imageHeight The height of the source image in pixels (for Y threshold calculation).
+     * @return [DetectedCardText] with `trackingId = -1` (caller sets the real ID).
+     */
+    internal fun parseCardTextWithBounds(recognizedText: Text, imageHeight: Int): DetectedCardText {
+        val rawText = recognizedText.text
+        val lines = rawText.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
+
+        // P2-02: Extract name using spatial bounding boxes
+        val cardName = extractCardNameSpatial(recognizedText, imageHeight)
+            .ifEmpty { extractCardName(lines) } // fallback to text-order if spatial fails
+
+        val setCode = extractSetCode(lines)
+        val collectorNumber = extractCollectorNumber(lines)
+        val confidence = calculateConfidence(cardName, setCode, collectorNumber)
+
+        return DetectedCardText(
+            trackingId = -1,
+            cardName = cardName,
+            setCode = setCode,
+            collectorNumber = collectorNumber,
+            ocrConfidence = confidence,
+            rawOcrText = rawText
+        )
+    }
+
+    /**
+     * Extract the card name using ML Kit bounding boxes (P2-02).
+     *
+     * Finds the text line whose bounding box top edge is within the upper 12% of
+     * the card image. This corresponds to the name bar region on a standard MTG card.
+     * If multiple lines qualify, takes the one with the largest bounding box width
+     * (the name is typically the widest text in that region).
+     *
+     * @param recognizedText ML Kit [Text] result with [Text.TextBlock] and [Text.Line] spatial data.
+     * @param imageHeight Image height in pixels for computing the 12% threshold.
+     * @return Card name string, or empty string if no text found in the name region.
+     */
+    private fun extractCardNameSpatial(recognizedText: Text, imageHeight: Int): String {
+        val nameThresholdY = (imageHeight * 0.12f).toInt()
+
+        // Collect all lines with their bounding boxes
+        val candidateLines = recognizedText.textBlocks
+            .flatMap { block -> block.lines }
+            .filter { line ->
+                val top = line.boundingBox?.top ?: Int.MAX_VALUE
+                top < nameThresholdY
+            }
+            .filter { line ->
+                // Must be a plausible name: ≥2 chars, contains a letter
+                line.text.trim().length >= 2 && line.text.any { it.isLetter() }
+            }
+
+        if (candidateLines.isEmpty()) return ""
+
+        // If multiple lines in the name region, prefer the widest (most likely the card name)
+        val bestLine = candidateLines.maxByOrNull { line ->
+            line.boundingBox?.width() ?: 0
+        }
+
+        return bestLine?.text?.trim() ?: ""
+    }
+
+    /**
+     * Parse raw OCR text into structured card fields (text-order based).
+     *
+     * Used by unit tests and as a fallback when spatial parsing is not available.
+     * Splits on newlines and applies regex extraction for set code and collector number.
+     *
+     * @param rawText Raw string from ML Kit.
+     * @return [DetectedCardText] with `trackingId = -1`.
      */
     internal fun parseCardText(rawText: String): DetectedCardText {
         val lines = rawText.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
@@ -110,18 +171,10 @@ class CardOcrProcessor {
     }
 
     /**
-     * Extract the card name from OCR lines.
+     * Extract the card name from text lines (fallback when spatial data unavailable).
      *
-     * Takes the first non-trivial line — a line that is at least 2 characters long and
-     * contains at least one letter. This avoids returning a lone digit (e.g., a mana cost
-     * fragment) as the card name when OCR splits text oddly.
-     *
-     * Limitation: Does not yet use ML Kit's spatial [com.google.mlkit.vision.text.TextBlock.getBoundingBox]
-     * to anchor extraction to the top 10% of the card image. That improvement is tracked
-     * as P2-02 in the implementation plan.
-     *
-     * @param lines Non-empty, trimmed lines from the raw OCR text.
-     * @return Card name candidate, or empty string if no suitable line found.
+     * Takes the first non-trivial line — ≥2 characters and contains at least one letter.
+     * Skips lone digits (e.g., mana cost fragments).
      */
     private fun extractCardName(lines: List<String>): String {
         return lines.firstOrNull { line ->
@@ -130,45 +183,69 @@ class CardOcrProcessor {
     }
 
     /**
-     * Extract the Magic set code from OCR lines.
+     * Extract the Magic set code from OCR lines (P2-04: legacy + modern formats).
      *
-     * Supports the legacy parenthesis format used on cards through approximately 2003:
-     * `(LEA)`, `(M21)`, `(2X2)`.
-     *
-     * Note: Modern cards (post-2003) print the collector line as `042/274 R • M21`
-     * without parentheses. Extraction for that format is tracked as P2-04.
+     * Strategy:
+     * 1. Legacy format: `(LEA)`, `(M21)`, `(2X2)` — parenthesized, searched in all lines.
+     * 2. Modern format: `042/274 R • M21` — set code as a 2–5 char alphanumeric token
+     *    at the end of the collector line (searched bottom-up). Excludes known language
+     *    codes (EN, FR, DE, etc.) that appear in the same region.
      *
      * @param lines Non-empty, trimmed lines from raw OCR text.
-     * @return Set code string (as OCR captured it), or empty string if not found.
+     * @return Set code string, or empty string if not found.
      */
-    private fun extractSetCode(lines: List<String>): String {
-        // Legacy format: (LEA), (M21), (2X2) — cards through ~2003
-        val legacyPattern = Regex("\\(([A-Z0-9]{2,4})\\)")
+    internal fun extractSetCode(lines: List<String>): String {
+        // Strategy 1: Legacy parenthesis format — (LEA), (M21), (2X2)
+        val legacyPattern = Regex("\\(([A-Z0-9]{2,5})\\)", RegexOption.IGNORE_CASE)
         for (line in lines) {
-            legacyPattern.find(line)?.let { return it.groupValues[1] }
+            legacyPattern.find(line.uppercase())?.let { match ->
+                val candidate = match.groupValues[1]
+                if (candidate !in LANGUAGE_CODES) return candidate
+            }
         }
+
+        // Strategy 2: Modern format — search bottom lines for isolated 2-5 char token
+        // Modern collector lines look like: "042/274 R • M21" or "EN 042/274 M21 ©2020"
+        val modernPattern = Regex("\\b([A-Z][A-Z0-9]{1,4})\\b")
+        for (line in lines.reversed().take(3)) {
+            val upperLine = line.uppercase()
+            // Only search lines that contain a collector fraction (confirms this is the collector line)
+            if (!upperLine.contains(Regex("\\d{1,3}/\\d{1,3}"))) continue
+
+            // Find all token candidates on this line
+            modernPattern.findAll(upperLine).forEach { match ->
+                val candidate = match.groupValues[1]
+                if (candidate.length in 2..5
+                    && candidate !in LANGUAGE_CODES
+                    && !candidate.all { it.isDigit() }
+                ) {
+                    return candidate
+                }
+            }
+        }
+
         return ""
     }
 
     /**
-     * Extract the collector number from OCR lines.
+     * Extract the collector number from OCR lines (P2-03: bottom-up + fraction preference).
      *
-     * Searches from the last line upward (collector info is at the bottom of every MTG card).
-     * Prefers the fraction format `NNN/NNN` (e.g., `042/274`) which is the most reliable
-     * indicator of the collector line on modern cards. Returns the numerator as the
-     * collector number (e.g., `"42"` from `"042/274"`).
+     * Searches from the last line upward. Prefers the fraction format `NNN/NNN`
+     * (e.g., `042/274`). Also supports the letter-suffixed variant `42a/280`.
+     * Returns the numerator with leading zeros stripped.
      *
-     * Falls back to a standalone 1–3 digit number with optional letter suffix
-     * (e.g., `"42a"` for variant prints) if no fraction is found in the bottom half.
-     *
-     * @param lines Non-empty, trimmed lines from raw OCR text.
-     * @return Collector number string, or empty string if not found.
+     * Falls back to a standalone 1–3 digit number in the bottom half of the text.
      */
-    private fun extractCollectorNumber(lines: List<String>): String {
-        // Prefer fraction format: "042/274" → returns "42"
-        val fractionPattern = Regex("\\b(\\d{1,3})/(\\d{1,3})\\b")
+    internal fun extractCollectorNumber(lines: List<String>): String {
+        // Prefer fraction format with optional letter suffix: "042/274" or "42a/280"
+        val fractionPattern = Regex("\\b(\\d{1,3}[a-zA-Z]?)/(\\d{1,3})\\b")
         for (line in lines.reversed()) {
-            fractionPattern.find(line)?.let { return it.groupValues[1].trimStart('0').ifEmpty { "0" } }
+            fractionPattern.find(line)?.let { match ->
+                val numerator = match.groupValues[1]
+                // Strip leading zeros from numeric-only part, keep letter suffix
+                val stripped = numerator.trimStart('0').ifEmpty { "0" }
+                return stripped
+            }
         }
 
         // Fallback: standalone 1–3 digit number with optional letter, bottom half only
@@ -177,7 +254,6 @@ class CardOcrProcessor {
         for (line in bottomHalf.reversed()) {
             standalonePattern.find(line)?.let { match ->
                 val candidate = match.groupValues[1]
-                // Require at least one digit; exclude pure letter matches
                 if (candidate.any { it.isDigit() }) return candidate
             }
         }
@@ -186,20 +262,15 @@ class CardOcrProcessor {
     }
 
     /**
-     * Calculate the overall OCR confidence score (0.0–1.0).
+     * Calculate OCR confidence score (0.0–1.0) with plausibility validation (P2-05).
      *
-     * Awards points only when extracted fields pass a plausibility check:
-     * - Card name (+0.5): non-empty, ≥ 2 chars, contains at least one letter, not all-digits.
-     * - Set code (+0.25): 2–5 alphanumeric characters.
+     * Awards:
+     * - Card name (+0.5): ≥2 chars, contains letter, not all-digits, not all-uppercase-single-word
+     *   shorter than 2 chars.
+     * - Set code (+0.25): 2–5 alphanumeric characters, not a known language code.
      * - Collector number (+0.25): matches `\d{1,3}[a-zA-Z]?` exactly.
      *
-     * A score < 0.6 triggers the region-based fallback in [OcrPipeline].
-     * The name carries the most weight because it is the primary identification signal.
-     *
-     * @param cardName Extracted card name (may be empty).
-     * @param setCode Extracted set code (may be empty).
-     * @param collectorNumber Extracted collector number (may be empty).
-     * @return Confidence score from 0.0 (nothing found) to 1.0 (all fields found and plausible).
+     * Score < 0.6 triggers region-based fallback in [OcrPipeline].
      */
     internal fun calculateConfidence(
         cardName: String,
@@ -211,10 +282,12 @@ class CardOcrProcessor {
         val nameIsPlausible = cardName.length >= 2
             && cardName.any { it.isLetter() }
             && !cardName.all { it.isDigit() }
+            && !cardName.matches(Regex("^[\\d\\s]+$"))  // reject strings like "3 2" (mana costs)
         if (nameIsPlausible) score += 0.5f
 
         val setIsPlausible = setCode.length in 2..5
             && setCode.all { it.isLetterOrDigit() }
+            && setCode.uppercase() !in LANGUAGE_CODES
         if (setIsPlausible) score += 0.25f
 
         val collectorIsPlausible = collectorNumber.matches(Regex("\\d{1,3}[a-zA-Z]?"))
@@ -225,5 +298,11 @@ class CardOcrProcessor {
 
     companion object {
         private const val TAG = "CardOcrProcessor"
+
+        /** Language codes that appear on cards but are NOT set codes. */
+        private val LANGUAGE_CODES = setOf(
+            "EN", "FR", "DE", "ES", "IT", "PT", "JP", "JA",
+            "KR", "KO", "CS", "CT", "RU", "PH", "ZH"
+        )
     }
 }

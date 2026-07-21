@@ -157,45 +157,76 @@ class FuzzyMatchingIntegrationTest {
 
     @Test
     fun testFilterThreshold_lowConfidenceMatchExcluded() {
-        // OCR name is completely wrong — no score should exceed 0.5
+        // P2-07: With ≤3 candidates, filter does NOT apply — candidate is preserved.
+        // But the score should still be low, indicating poor match quality.
+        // This test validates that a totally wrong OCR name produces a LOW score
+        // even though the candidate is not filtered out.
         val text = detectedText("Random Garbage Text", setCode = "XXX", collectorNumber = "999")
         val candidates = listOf(scryfallCard("lotus", "Black Lotus", "LEA", "1"))
 
         val results = fuzzyMatcher.matchCard(text, candidates)
 
-        // Either empty (filtered) or every remaining result is above 0.5 by design of the filter
-        if (results.isNotEmpty()) {
-            assertTrue(
-                "Any result that passes the filter must have score > 0.5",
-                results.all { it.matchScore > 0.5f }
-            )
-        }
-        // The important assertion: a totally wrong name should not produce a high-confidence match
+        // With P2-07: single candidate IS preserved (not filtered) — size should be 1
+        assertEquals("Single candidate preserved by P2-07", 1, results.size)
+
+        // The important assertion: score should be LOW — the name is completely wrong
         assertTrue(
-            "Random name should not produce score > 0.7",
-            results.isEmpty() || results.first().matchScore < 0.7f
+            "Random name should produce score < 0.5 (poor match quality even though preserved)",
+            results.first().matchScore < 0.5f
         )
     }
 
     @Test
     fun testSingleCandidatePreserved_evenWithNoisyName() {
-        // Heavily corrupted OCR — Levenshtein vs correct name will score below 0.5
-        // but with only 1 candidate (from Scryfall identity lookup), it should be preserved.
-        // This test validates the fix intended by P2-07 in the implementation plan.
-        // Currently FuzzyCardMatcher filters all results ≤ 0.5 regardless of list size.
-        // After P2-07 is applied, a single candidate bypasses the filter.
-        val text = detectedText("Blck Lotuz")  // 3+ char difference
+        // Heavily corrupted OCR — Levenshtein vs correct name scores below 0.5.
+        // With P2-07 fix: single candidate from Scryfall identity/fuzzy lookup is preserved.
+        val text = detectedText("Blck Lotuz")  // 3+ char difference from "Black Lotus"
         val candidates = listOf(scryfallCard("lotus", "Black Lotus", "LEA", "1"))
 
         val results = fuzzyMatcher.matchCard(text, candidates)
 
-        // Current behaviour (pre P2-07): may be empty due to score filter
-        // After P2-07: result should be preserved even at low score
-        // This test documents the current state; it will need updating when P2-07 lands.
-        if (results.isNotEmpty()) {
-            assertEquals("If a result is returned it should be Black Lotus", "Black Lotus", results[0].scryfallCard.name)
-        }
-        // No assertion on isEmpty() — documents current behaviour honestly
+        // P2-07: single candidate is NOT filtered out regardless of local score
+        assertEquals("Single candidate must be preserved", 1, results.size)
+        assertEquals(
+            "Preserved candidate should be Black Lotus",
+            "Black Lotus",
+            results[0].scryfallCard.name
+        )
+    }
+
+    @Test
+    fun testThreeCandidatesPreserved_evenWithLowScores() {
+        // 3 candidates from Scryfall fuzzy — all preserved even if scores are low
+        val text = detectedText("Xyzzy Foo")  // no name match for any candidate
+        val candidates = listOf(
+            scryfallCard("a", "Black Lotus", "LEA", "1"),
+            scryfallCard("b", "Ancestral Recall", "LEA", "2"),
+            scryfallCard("c", "Mox Pearl", "LEA", "3")
+        )
+
+        val results = fuzzyMatcher.matchCard(text, candidates)
+
+        assertEquals("All 3 candidates should be preserved (≤3 threshold)", 3, results.size)
+    }
+
+    @Test
+    fun testFourPlusCandidates_filterApplied() {
+        // 4+ candidates from search — filter DOES apply
+        val text = detectedText("Xyzzy Foo")  // no match
+        val candidates = listOf(
+            scryfallCard("a", "Black Lotus", "LEA", "1"),
+            scryfallCard("b", "Ancestral Recall", "LEA", "2"),
+            scryfallCard("c", "Mox Pearl", "LEA", "3"),
+            scryfallCard("d", "Mox Sapphire", "LEA", "4")
+        )
+
+        val results = fuzzyMatcher.matchCard(text, candidates)
+
+        // With 4 candidates, the 0.5 filter applies — none of these should score > 0.5
+        assertTrue(
+            "With >3 candidates and no name match, filter should remove all or most",
+            results.size < candidates.size
+        )
     }
 
     // ──────────────────────────────────────────────────────────────────────────

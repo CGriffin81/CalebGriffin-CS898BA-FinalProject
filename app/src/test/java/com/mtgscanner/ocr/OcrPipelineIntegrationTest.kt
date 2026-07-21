@@ -109,14 +109,37 @@ class OcrPipelineIntegrationTest {
 
     @Test
     fun testSetCodeExtraction_noParenthesis_returnsEmpty() {
-        // Modern cards print "042/274 R • M21" — this format is P2-04, not yet implemented.
-        // Verify the current behavior (empty) rather than asserting the wrong thing.
-        val result = processor.parseCardText("Shock\n280/274 R\nM21")
-        // Modern format not yet supported — set code will be empty until P2-04 is implemented.
-        assertTrue(
-            "Set code is either empty (modern card, P2-04 not yet done) or the set code string",
-            result.setCode.isEmpty() || result.setCode.length in 2..5
+        // Modern cards print "042/274 R • M21" — P2-04 now supports this format.
+        val result = processor.parseCardText("Shock\nInstant\nDeal 2 damage.\n280/274 R M21")
+        assertEquals("Modern format set code should be extracted", "M21", result.setCode)
+    }
+
+    @Test
+    fun testSetCodeExtraction_modernFormat_variousSetCodes() {
+        val testCases = listOf(
+            "042/274 R MH2" to "MH2",
+            "001/287 M ONE" to "ONE",
+            "156/281 U DMU" to "DMU",
+            "280/274 C M21" to "M21"
         )
+        testCases.forEach { (collectorLine, expectedSet) ->
+            val result = processor.parseCardText("Card Name\nType Line\n$collectorLine")
+            assertEquals("Modern set code from '$collectorLine'", expectedSet, result.setCode)
+        }
+    }
+
+    @Test
+    fun testSetCodeExtraction_languageCodesExcluded() {
+        // "EN" appears on collector lines but is a language code, not a set code
+        val result = processor.parseCardText("Card Name\nEN 042/274 M21")
+        assertEquals("Should extract M21 not EN", "M21", result.setCode)
+    }
+
+    @Test
+    fun testSetCodeExtraction_legacyAndModernCoexist() {
+        // Legacy format should be found first if present
+        val result = processor.parseCardText("Card Name\n(LEA)\n042/274 M21")
+        assertEquals("Legacy format should take priority when present", "LEA", result.setCode)
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -229,6 +252,20 @@ class OcrPipelineIntegrationTest {
         assertEquals("4-digit collector is not plausible → name + set only", 0.75f, score, 0.001f)
     }
 
+    @Test
+    fun testConfidence_manaCostLikeName_notPlausible() {
+        // "3 2" looks like mana costs, not a card name
+        val score = processor.calculateConfidence("3 2", "M21", "42")
+        assertTrue("Mana cost pattern should not earn name bonus", score <= 0.5f)
+    }
+
+    @Test
+    fun testConfidence_languageCodeAsSetCode_notPlausible() {
+        // "EN" is a language code, not a valid set code
+        val score = processor.calculateConfidence("Black Lotus", "EN", "1")
+        assertEquals("Language code as set → name + collector only", 0.75f, score, 0.001f)
+    }
+
     // ──────────────────────────────────────────────────────────────────────────
     // Full parseCardText round-trips — realistic OCR output
     // ──────────────────────────────────────────────────────────────────────────
@@ -313,7 +350,7 @@ class OcrPipelineIntegrationTest {
 
     @Test
     fun testSetCodePattern_legacyFormats() {
-        val pattern = Regex("\\(([A-Z0-9]{2,4})\\)")
+        val pattern = Regex("\\(([A-Z0-9]{2,5})\\)", RegexOption.IGNORE_CASE)
         val testCases = mapOf(
             "(LEA)" to "LEA",
             "(M21)" to "M21",
@@ -322,7 +359,7 @@ class OcrPipelineIntegrationTest {
             "(ABUR)" to "ABUR"
         )
         testCases.forEach { (input, expected) ->
-            val match = pattern.find(input)
+            val match = pattern.find(input.uppercase())
             assertEquals("Pattern match for '$input'", expected, match?.groupValues?.get(1))
         }
     }
