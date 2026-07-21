@@ -1,5 +1,6 @@
 package com.mtgscanner.ui
 
+import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
@@ -17,8 +18,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mtgscanner.camera.CameraPreviewManager
 import com.mtgscanner.data.ScannedCardDatabase
+import com.mtgscanner.data.ScannedCardEntity
 import com.mtgscanner.detection.DetectionPipeline
 import com.mtgscanner.model.*
+import kotlinx.coroutines.launch
 
 /**
  * AppRoot: Root navigation composable routing all screens and managing transitions.
@@ -95,25 +98,34 @@ fun AppRoot(
 
             AppScreen.VERIFICATION -> {
                 navigator.cardVerification?.let { cardVerification ->
+                    val scope = rememberCoroutineScope()
+
                     Box(modifier = Modifier.fillMaxSize()) {
                         VerificationScreen(
                             cardVerification = cardVerification,
-                            onConfirm = { _, _ ->
-                                // Save to database
-                                // TODO: Insert into Room database
-                                navigator.navigateToCamera() // Return to camera after confirm
+                            onConfirm = { scannedCard, _ ->
+                                scope.launch {
+                                    saveCardToCollection(scannedCard, database)
+                                }
+                                detectionPipeline.clearProcessedCards()
+                                navigator.navigateToCamera()
                             },
                             onReject = {
-                                navigator.navigateToCamera() // Return to camera
+                                detectionPipeline.clearProcessedCards()
+                                navigator.navigateToCamera()
                             },
                             onSkip = {
-                                navigator.navigateToCamera() // Return to camera
+                                detectionPipeline.clearProcessedCards()
+                                navigator.navigateToCamera()
                             }
                         )
 
                         // Back button overlay
                         IconButton(
-                            onClick = { navigator.navigateToCamera() },
+                            onClick = {
+                                detectionPipeline.clearProcessedCards()
+                                navigator.navigateToCamera()
+                            },
                             modifier = Modifier
                                 .align(Alignment.TopStart)
                                 .padding(16.dp)
@@ -155,6 +167,62 @@ fun AppRoot(
                 }
             }
         }
+    }
+}
+
+/**
+ * Persist a confirmed card to the Room collection database.
+ *
+ * Logic:
+ * 1. Validate that [ScannedCard.scryfallId] is non-blank (guards against bad Scryfall data).
+ * 2. Check if the card already exists via [ScannedCardDao.findCardByIdentity].
+ * 3. If it exists: increment the stored quantity by the new card's quantity.
+ * 4. If it doesn't: insert a new [ScannedCardEntity] row.
+ *
+ * This function is suspend-safe and should be called from a coroutine scope.
+ *
+ * @param scannedCard The confirmed card from the VerificationScreen.
+ * @param database The Room database instance.
+ */
+private suspend fun saveCardToCollection(scannedCard: ScannedCard, database: ScannedCardDatabase) {
+    val dao = database.scannedCardDao()
+
+    // Guard: reject cards with empty scryfallId (prevents corrupt data)
+    if (scannedCard.scryfallId.isBlank()) {
+        Log.e("AppRoot", "Refusing to store card with blank scryfallId: '${scannedCard.cardName}'")
+        return
+    }
+
+    // Check for duplicate by identity triple (scryfallId + setCode + collectorNumber)
+    val existing = dao.findCardByIdentity(
+        scannedCard.scryfallId,
+        scannedCard.setCode,
+        scannedCard.collectorNumber
+    )
+
+    if (existing != null) {
+        // Card already in collection — increment quantity
+        val updatedQuantity = existing.quantity + scannedCard.quantity
+        dao.updateCard(existing.copy(quantity = updatedQuantity))
+        Log.d("AppRoot", "Updated quantity for '${existing.cardName}': ${existing.quantity} → $updatedQuantity")
+    } else {
+        // New card — insert fresh row
+        val entity = ScannedCardEntity(
+            scryfallId = scannedCard.scryfallId,
+            cardName = scannedCard.cardName,
+            setCode = scannedCard.setCode,
+            collectorNumber = scannedCard.collectorNumber,
+            quantity = scannedCard.quantity,
+            rarity = scannedCard.rarity,
+            colors = scannedCard.colors,
+            typeLine = scannedCard.typeLine,
+            oracleText = scannedCard.oracleText,
+            imageUrl = scannedCard.imageUrl,
+            scannedTimestamp = scannedCard.scannedTimestamp,
+            userConfirmed = true
+        )
+        val insertedId = dao.insertCard(entity)
+        Log.d("AppRoot", "Inserted '${scannedCard.cardName}' with id=$insertedId")
     }
 }
 

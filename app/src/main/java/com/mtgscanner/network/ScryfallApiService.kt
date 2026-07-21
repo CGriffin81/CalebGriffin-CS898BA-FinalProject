@@ -1,6 +1,7 @@
 package com.mtgscanner.network
 
 import retrofit2.http.GET
+import retrofit2.http.Path
 import retrofit2.http.Query
 import retrofit2.Call
 
@@ -59,17 +60,20 @@ interface ScryfallApiService {
 
     /**
      * Get a card by set code and collector number.
-     * 
-     * @param setCode Set code (e.g. "LEA", "M21")
-     * @param collectorNumber Collector number (e.g. "1", "102", "280a")
-     * @return Single card or 404 if not found
-     * 
+     *
+     * Uses Scryfall's collector endpoint: GET /cards/{setCode}/{collectorNumber}
+     * This is the most precise lookup when both identifiers are known from OCR.
+     *
+     * @param setCode Set code (e.g. "lea", "m21") — path parameter, case-insensitive on Scryfall.
+     * @param collectorNumber Collector number (e.g. "1", "102", "280a") — path parameter.
+     * @return Single card or 404 if not found.
+     *
      * Docs: https://scryfall.com/docs/api/cards/collector
      */
     @GET("/cards/{setCode}/{collectorNumber}")
     fun getCardByCollectorNumber(
-        @Query("set") setCode: String,
-        @Query("collector_number") collectorNumber: String
+        @Path("setCode") setCode: String,
+        @Path("collectorNumber") collectorNumber: String
     ): Call<ScryfallCardResponse>
 
     /**
