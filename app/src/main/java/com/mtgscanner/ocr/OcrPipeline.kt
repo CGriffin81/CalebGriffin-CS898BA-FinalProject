@@ -76,7 +76,7 @@ class OcrPipeline(
     /**
      * Perform region-focused OCR as a fallback when full-card OCR has low confidence.
      * Divides the card into distinct regions (name region, collector region) and processes each independently.
-     * Combines results by taking the name from the name region and collector info from the collector region.
+     * Combines results by preferring collector-region data for set/collector fields.
      * Averaged confidence score across regions provides more robust recognition.
      *
      * @param cardBitmap Card image to process by regions
@@ -89,17 +89,25 @@ class OcrPipeline(
     ): DetectedCardText {
         return try {
             val regions = preprocessor.extractCardRegions(cardBitmap)
-            
+
+            Log.d("OcrPipeline", "Region crops: name=${regions.nameRegion.width}x${regions.nameRegion.height}, " +
+                "collector=${regions.collectorRegion.width}x${regions.collectorRegion.height}")
+
             // Recognize each region independently
             val nameResult = ocrProcessor.processCardImage(regions.nameRegion, trackingId)
             val collectorResult = ocrProcessor.processCardImage(regions.collectorRegion, trackingId)
-            
-            // Combine results
+
+            Log.d("OcrPipeline", "Region name OCR: name='${nameResult.cardName}' " +
+                "set='${nameResult.setCode}' rawLen=${nameResult.rawOcrText.length}")
+            Log.d("OcrPipeline", "Region collector OCR: collector='${collectorResult.collectorNumber}' " +
+                "set='${collectorResult.setCode}' rawLen=${collectorResult.rawOcrText.length}")
+
+            // Combine results — prefer collector region for set/collector fields
             return DetectedCardText(
                 trackingId = trackingId,
-                cardName = nameResult.cardName,
-                setCode = nameResult.setCode + collectorResult.setCode,  // Could appear in either region
-                collectorNumber = collectorResult.collectorNumber,
+                cardName = nameResult.cardName.ifEmpty { collectorResult.cardName },
+                setCode = collectorResult.setCode.ifEmpty { nameResult.setCode },
+                collectorNumber = collectorResult.collectorNumber.ifEmpty { nameResult.collectorNumber },
                 ocrConfidence = (nameResult.ocrConfidence + collectorResult.ocrConfidence) / 2f,
                 rawOcrText = nameResult.rawOcrText + "\n" + collectorResult.rawOcrText
             )

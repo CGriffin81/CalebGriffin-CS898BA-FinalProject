@@ -170,8 +170,10 @@ class MainActivity : ComponentActivity() {
                 ) {
                     val navigator = remember { AppNavigator() }
 
-                    // Wire DetectionPipeline callback to navigation
-                    setupDetectionPipelineCallback(navigator)
+                    // Wire DetectionPipeline callback to navigation — once only
+                    LaunchedEffect(Unit) {
+                        setupDetectionPipelineCallback(navigator)
+                    }
 
                     AppRoot(
                         navigator = navigator,
@@ -223,22 +225,39 @@ class MainActivity : ComponentActivity() {
      * @param navigator AppNavigator instance to manage screen transitions after card processing is complete
      */
     private fun setupDetectionPipelineCallback(navigator: AppNavigator) {
+        // Track OCR retry attempts per tracking ID to prevent infinite empty-result loops
+        val ocrRetryCount = mutableMapOf<Int, Int>()
+        val MAX_OCR_RETRIES = 2
+
         detectionPipeline.onCardReady = { cardBitmap, trackingId ->
             lifecycleScope.launch {
                 try {
-                    Log.d(TAG, "Card detected (trackingId=$trackingId), starting OCR...")
+                    val retries = ocrRetryCount.getOrDefault(trackingId, 0)
+                    Log.d(TAG, "Card detected (trackingId=$trackingId, retry=$retries), " +
+                        "crop=${cardBitmap.width}x${cardBitmap.height}, starting OCR...")
 
                     // Step 1: OCR recognition
                     val detectedText = ocrPipeline.recognizeCard(cardBitmap, trackingId)
                     Log.d(TAG, "OCR result: '${detectedText.cardName}' (confidence=${detectedText.ocrConfidence})")
 
-                    // Guard: If OCR produced no usable card name, don't navigate.
-                    // Clear the processed card so detection can re-try on the next stable frame.
+                    // Guard: If OCR produced no usable card name
                     if (detectedText.cardName.isBlank()) {
-                        Log.w(TAG, "OCR produced empty card name for trackingId=$trackingId — skipping verification")
-                        detectionPipeline.clearProcessedCards()
+                        if (retries < MAX_OCR_RETRIES) {
+                            // Allow retry — clear this specific card from processed set
+                            ocrRetryCount[trackingId] = retries + 1
+                            Log.w(TAG, "OCR empty for trackingId=$trackingId (retry ${retries + 1}/$MAX_OCR_RETRIES)")
+                            detectionPipeline.clearProcessedCards()
+                        } else {
+                            // Max retries reached — give up on this card, don't retry again
+                            Log.w(TAG, "OCR failed $MAX_OCR_RETRIES times for trackingId=$trackingId — giving up")
+                            ocrRetryCount.remove(trackingId)
+                            // Don't clear processedCards — this card stays suppressed
+                        }
                         return@launch
                     }
+
+                    // OCR succeeded — clear retry counter
+                    ocrRetryCount.remove(trackingId)
 
                     // Step 1.5: Check OCR confidence and warn if low
                     if (detectedText.ocrConfidence < 0.6) {

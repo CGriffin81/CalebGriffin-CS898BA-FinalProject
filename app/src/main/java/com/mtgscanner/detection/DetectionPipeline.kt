@@ -55,11 +55,27 @@ class DetectionPipeline(
             for ((detIdx, trackingId) in matchMap) {
                 if (trackingId !in processedCards && cardTracker.isStableDetection(trackingId)) {
                     val cardRegion = detections[detIdx]
-                    val cardBitmap = cardDetector.extractCardImage(frameBitmap, cardRegion)
+
+                    // Expand bounding box by 20% to include card borders and text regions.
+                    // The edge-based detection finds the interior (art area) bounded by card
+                    // text edges — expanding ensures the name bar and collector line are included.
+                    // 20% is needed because the collector line sits at the very bottom edge.
+                    val expandFraction = 0.20f
+                    val expandX = (cardRegion.width * expandFraction).toInt()
+                    val expandY = (cardRegion.height * expandFraction).toInt()
+                    val expandedRegion = CardRegion(
+                        x = (cardRegion.x - expandX).coerceAtLeast(0),
+                        y = (cardRegion.y - expandY).coerceAtLeast(0),
+                        width = (cardRegion.width + 2 * expandX).coerceAtMost(frameBitmap.width - (cardRegion.x - expandX).coerceAtLeast(0)),
+                        height = (cardRegion.height + 2 * expandY).coerceAtMost(frameBitmap.height - (cardRegion.y - expandY).coerceAtLeast(0)),
+                        area = cardRegion.area
+                    )
+
+                    val cardBitmap = cardDetector.extractCardImage(frameBitmap, expandedRegion)
 
                     Log.d(TAG, "Card ready: trackingId=$trackingId, " +
-                        "region=${cardRegion.x},${cardRegion.y} ${cardRegion.width}x${cardRegion.height}, " +
-                        "aspect=${String.format("%.2f", cardRegion.aspectRatio)}, " +
+                        "detected=${cardRegion.width}x${cardRegion.height}, " +
+                        "expanded=${expandedRegion.width}x${expandedRegion.height}, " +
                         "cropBitmap=${cardBitmap.width}x${cardBitmap.height}")
 
                     onCardReady(cardBitmap, trackingId)
