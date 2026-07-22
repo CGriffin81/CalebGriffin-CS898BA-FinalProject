@@ -133,10 +133,10 @@ class CardAnatomyDetectorTest {
     // ══════════════════════════════════════════════════════════════════
 
     @Test
-    fun `modern template name bar is in top 8 percent`() {
+    fun `modern template name bar is in top 10 percent`() {
         val template = registry.getTemplate(FrameType.MODERN)
-        assertTrue("name top < 8%", template.nameBar.top < 0.08f)
-        assertTrue("name bottom < 10%", template.nameBar.bottom < 0.10f)
+        assertTrue("name top < 5%", template.nameBar.top < 0.05f)
+        assertTrue("name bottom <= 10%", template.nameBar.bottom <= 0.10f)
     }
 
     @Test
@@ -242,11 +242,11 @@ class CardAnatomyDetectorTest {
     // ══════════════════════════════════════════════════════════════════
 
     @Test
-    fun `borderless template name is higher than modern`() {
+    fun `borderless template name is at or higher than modern`() {
         val modern = registry.getTemplate(FrameType.MODERN)
         val borderless = registry.getTemplate(FrameType.BORDERLESS)
-        assertTrue("Borderless name top < Modern name top",
-            borderless.nameBar.top < modern.nameBar.top)
+        assertTrue("Borderless name top <= Modern name top",
+            borderless.nameBar.top <= modern.nameBar.top)
     }
 
     @Test
@@ -349,7 +349,7 @@ class CardAnatomyDetectorTest {
         )
         assertTrue("Name width > 300px at standard res", nameRect.width > 300)
         assertTrue("Name height > 20px at standard res", nameRect.height > 20)
-        assertTrue("Name height < 50px at standard res", nameRect.height < 50)
+        assertTrue("Name height < 80px at standard res", nameRect.height < 80)
     }
 
     @Test

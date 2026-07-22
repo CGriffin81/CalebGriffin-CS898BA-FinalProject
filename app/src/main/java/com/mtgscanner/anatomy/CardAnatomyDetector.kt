@@ -37,6 +37,13 @@ class CardAnatomyDetector(
 
         /** Minimum edge magnitude to consider a horizontal divider */
         private const val DIVIDER_EDGE_THRESHOLD = 30
+
+        /**
+         * Expansion fraction applied by DetectionPipeline before this stage.
+         * The incoming bitmap has this much padding on all sides beyond the detected card region.
+         * Must match DetectionPipeline.expandFraction (currently 0.20f).
+         */
+        private const val EXPANSION_FRACTION = 0.20f
     }
 
     /**
@@ -339,13 +346,34 @@ class CardAnatomyDetector(
     // UTILITY FUNCTIONS
     // ═══════════════════════════════════════════════════════════════════
 
-    /** Convert proportional (0–1) coordinates to pixel Rect. */
+    /** Convert proportional (0–1) card-relative coordinates to pixel Rect,
+     *  accounting for the expansion padding in the bitmap.
+     *
+     *  The bitmap layout with 20% expansion:
+     *    card_start = 0.20 / 1.40 = 0.1429 of bitmap
+     *    card_end   = 1.20 / 1.40 = 0.8571 of bitmap
+     *
+     *  Template proportions are relative to card content, not the full bitmap.
+     *  This method translates card-relative → bitmap-absolute.
+     */
     private fun proportionalToPixel(prop: ProportionalRect, width: Int, height: Int): Rect {
+        // Where actual card content starts/ends within the expanded bitmap
+        val cardStartX = EXPANSION_FRACTION / (1f + 2f * EXPANSION_FRACTION)
+        val cardEndX = (1f + EXPANSION_FRACTION) / (1f + 2f * EXPANSION_FRACTION)
+        val cardStartY = cardStartX  // Same ratio for both axes
+        val cardEndY = cardEndX
+
+        // Translate card-relative (0-1) to bitmap-absolute (0-1)
+        val absLeft = cardStartX + prop.left * (cardEndX - cardStartX)
+        val absRight = cardStartX + prop.right * (cardEndX - cardStartX)
+        val absTop = cardStartY + prop.top * (cardEndY - cardStartY)
+        val absBottom = cardStartY + prop.bottom * (cardEndY - cardStartY)
+
         return Rect(
-            (prop.left * width).toInt().coerceIn(0, width - 1),
-            (prop.top * height).toInt().coerceIn(0, height - 1),
-            (prop.right * width).toInt().coerceIn(1, width),
-            (prop.bottom * height).toInt().coerceIn(1, height)
+            (absLeft * width).toInt().coerceIn(0, width - 1),
+            (absTop * height).toInt().coerceIn(0, height - 1),
+            (absRight * width).toInt().coerceIn(1, width),
+            (absBottom * height).toInt().coerceIn(1, height)
         )
     }
 

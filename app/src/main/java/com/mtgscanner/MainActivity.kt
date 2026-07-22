@@ -34,7 +34,6 @@ import com.mtgscanner.network.NetworkStateManager
 import com.mtgscanner.network.RetryPolicy
 import com.mtgscanner.network.ScryfallApiClient
 import com.mtgscanner.network.ScryfallRepositoryResilience
-import com.mtgscanner.ocr.OcrPipeline
 import com.mtgscanner.ui.ErrorSnackbar
 import com.mtgscanner.ui.LowConfidenceWarning
 import com.mtgscanner.ui.OfflineNotice
@@ -67,7 +66,6 @@ class MainActivity : ComponentActivity() {
     private lateinit var cardDetector: CardDetector
     private lateinit var cardTracker: CardTracker
     private lateinit var detectionPipeline: DetectionPipeline
-    private lateinit var ocrPipeline: OcrPipeline
     private lateinit var cardAnatomyEngine: CardAnatomyEngine
     private lateinit var fuzzyCardMatcher: FuzzyCardMatcher
     private lateinit var scryfallApiClient: ScryfallApiClient
@@ -86,6 +84,9 @@ class MainActivity : ComponentActivity() {
 
     /** Developer option: show anatomy debug overlay on camera preview. */
     internal var showAnatomyOverlay by mutableStateOf(false)
+
+    /** Pipeline status for debug overlay. */
+    internal var pipelineStatus by mutableStateOf(com.mtgscanner.ui.PipelineStatus())
 
     /**
      * Initialize the MainActivity with all required components.
@@ -123,12 +124,8 @@ class MainActivity : ComponentActivity() {
         detectionPipeline = DetectionPipeline()
         Log.d(TAG, "Detection pipeline initialized")
 
-        // Initialize OCR pipeline
-        ocrPipeline = OcrPipeline()
-        Log.d(TAG, "OCR pipeline initialized")
-
-        // Initialize Card Anatomy Engine (wraps OCR with anatomy-aware detection)
-        cardAnatomyEngine = CardAnatomyEngine(ocrPipeline = ocrPipeline)
+        // Initialize Card Anatomy Engine (layout-driven, no full-card OCR)
+        cardAnatomyEngine = CardAnatomyEngine()
         Log.d(TAG, "Card Anatomy Engine initialized")
 
         // Initialize fuzzy matching
@@ -191,7 +188,8 @@ class MainActivity : ComponentActivity() {
                         database = database,
                         cardAnatomyEngine = cardAnatomyEngine,
                         showAnatomyOverlay = showAnatomyOverlay,
-                        onToggleOverlay = { showAnatomyOverlay = !showAnatomyOverlay }
+                        onToggleOverlay = { showAnatomyOverlay = !showAnatomyOverlay },
+                        pipelineStatus = pipelineStatus
                     )
                 }
             }
@@ -248,9 +246,23 @@ class MainActivity : ComponentActivity() {
                     Log.d(TAG, "Card detected (trackingId=$trackingId, retry=$retries), " +
                         "crop=${cardBitmap.width}x${cardBitmap.height}, starting OCR...")
 
+                    // Update status: anatomy + OCR stage
+                    pipelineStatus = pipelineStatus.copy(
+                        stage = com.mtgscanner.ui.PipelineStage.ANATOMY,
+                        trackingId = trackingId,
+                        isStable = true
+                    )
+
                     // Step 1: Card Anatomy Engine (detection + OCR)
                     val detectedText = cardAnatomyEngine.analyze(cardBitmap, trackingId)
                     Log.d(TAG, "Anatomy+OCR result: '${detectedText.cardName}' (confidence=${detectedText.ocrConfidence})")
+
+                    // Update status: OCR complete
+                    pipelineStatus = pipelineStatus.copy(
+                        stage = com.mtgscanner.ui.PipelineStage.OCR,
+                        recognizedName = detectedText.cardName,
+                        ocrConfidence = detectedText.ocrConfidence
+                    )
 
                     // Guard: If OCR produced no usable card name
                     if (detectedText.cardName.isBlank()) {
@@ -279,6 +291,10 @@ class MainActivity : ComponentActivity() {
                     }
 
                     // Step 2: Fetch Scryfall candidates with resilience (network + retry + cache)
+                    pipelineStatus = pipelineStatus.copy(
+                        stage = com.mtgscanner.ui.PipelineStage.SCRYFALL,
+                        scryfallState = "searching"
+                    )
                     val resultCandidates = scryfallRepositoryResilience.findCardCandidatesResilient(detectedText)
                     
                     val scryfallCandidates = when (resultCandidates) {
@@ -286,18 +302,21 @@ class MainActivity : ComponentActivity() {
                             Log.d(TAG, "Scryfall lookup successful: ${resultCandidates.data.size} candidates")
                             isOffline = false
                             errorMessage = null
+                            pipelineStatus = pipelineStatus.copy(scryfallState = "found", candidateCount = resultCandidates.data.size)
                             resultCandidates.data
                         }
                         is ScryfallRepositoryResilience.Result.CacheHit -> {
                             Log.w(TAG, "Scryfall cache hit: ${resultCandidates.message}")
                             isOffline = true
                             errorMessage = "Using offline cache"
+                            pipelineStatus = pipelineStatus.copy(scryfallState = "cache", candidateCount = resultCandidates.data.size)
                             resultCandidates.data
                         }
                         is ScryfallRepositoryResilience.Result.Error -> {
                             Log.e(TAG, "Scryfall lookup failed: ${resultCandidates.message}")
                             errorMessage = resultCandidates.message
                             isOffline = true
+                            pipelineStatus = pipelineStatus.copy(scryfallState = "failed")
                             resultCandidates.fallbackData ?: emptyList()
                         }
                     }
@@ -305,6 +324,7 @@ class MainActivity : ComponentActivity() {
                     Log.d(TAG, "Found ${scryfallCandidates.size} Scryfall candidates")
 
                     // Step 3: Fuzzy matching
+                    pipelineStatus = pipelineStatus.copy(stage = com.mtgscanner.ui.PipelineStage.MATCHING)
                     val matchCandidates = fuzzyCardMatcher.matchCard(
                         detectedText,
                         scryfallCandidates

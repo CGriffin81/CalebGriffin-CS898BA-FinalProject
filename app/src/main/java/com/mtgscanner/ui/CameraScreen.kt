@@ -45,13 +45,12 @@ fun CameraScreen(
     cardAnatomyEngine: CardAnatomyEngine? = null,
     showAnatomyOverlay: Boolean = false,
     onToggleOverlay: () -> Unit = {},
+    pipelineStatus: PipelineStatus = PipelineStatus(),
     modifier: Modifier = Modifier
 ) {
     // Detection count updated from onFrameAnalysis — NOT from onCardReady
     var detectionCount by remember { mutableStateOf(0) }
 
-    // Wire the frame analysis callback to update the UI detection counter.
-    // This does NOT touch onCardReady — that is owned by MainActivity.
     LaunchedEffect(Unit) {
         detectionPipeline.onFrameAnalysis = { count ->
             detectionCount = count
@@ -76,6 +75,18 @@ fun CameraScreen(
             }
         )
 
+        // ─── Detection Debug Overlay ───
+        if (showAnatomyOverlay) {
+            DetectionDebugOverlay(
+                detections = detectionPipeline.lastDetections,
+                lastNormalization = detectionPipeline.normalizer.lastResult,
+                frameWidth = 2992,  // Will be overwritten on first frame; default for S23
+                frameHeight = 2992,
+                showOverlay = true,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+
         // ─── Anatomy Debug Overlay ───
         if (showAnatomyOverlay && cardAnatomyEngine != null) {
             val layout = cardAnatomyEngine.lastCardLayout
@@ -87,6 +98,13 @@ fun CameraScreen(
                 modifier = Modifier.fillMaxSize()
             )
         }
+
+        // ─── Pipeline Status Panel ───
+        PipelineStatusOverlay(
+            state = pipelineStatus,
+            showOverlay = showAnatomyOverlay,
+            modifier = Modifier.align(Alignment.TopEnd)
+        )
 
         // Top status bar with detection count
         Row(

@@ -59,7 +59,8 @@ fun AppRoot(
     database: ScannedCardDatabase,
     cardAnatomyEngine: CardAnatomyEngine? = null,
     showAnatomyOverlay: Boolean = false,
-    onToggleOverlay: () -> Unit = {}
+    onToggleOverlay: () -> Unit = {},
+    pipelineStatus: PipelineStatus = PipelineStatus()
 ) {
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -78,7 +79,8 @@ fun AppRoot(
                         detectionPipeline = detectionPipeline,
                         cardAnatomyEngine = cardAnatomyEngine,
                         showAnatomyOverlay = showAnatomyOverlay,
-                        onToggleOverlay = onToggleOverlay
+                        onToggleOverlay = onToggleOverlay,
+                        pipelineStatus = pipelineStatus
                     )
 
                     // Back button overlay

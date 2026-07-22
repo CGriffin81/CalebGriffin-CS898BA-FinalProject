@@ -4,13 +4,20 @@ import android.graphics.Bitmap
 import android.util.Log
 
 /**
- * Orchestrates detection → tracking → OCR-readiness for each camera frame.
+ * Orchestrates detection → tracking → normalization → callback for each camera frame.
  *
  * Flow per frame:
  * 1. Detect card regions via [CardDetector]
  * 2. Track detections via [CardTracker] (frame-to-frame ID persistence)
- * 3. When a track reaches 3-frame stability, extract the card image and fire [onCardReady]
- * 4. Prune stale tracks and notify the UI via [onFrameAnalysis]
+ * 3. When a track reaches stability, normalize via [CardNormalizer]
+ *    - Validates aspect ratio (rejects non-card shapes)
+ *    - Expands bounding box consistently (20%)
+ *    - Scales to canonical 488×680 resolution
+ * 4. Fire [onCardReady] with normalized bitmap
+ * 5. Prune stale tracks and notify UI via [onFrameAnalysis]
+ *
+ * The normalized output ensures OCR always operates on a consistent resolution
+ * regardless of camera frame size or card distance from camera.
  */
 class DetectionPipeline(
     var onCardReady: (cardBitmap: Bitmap, trackingId: Int) -> Unit = { _, _ -> },
@@ -22,12 +29,21 @@ class DetectionPipeline(
 
     private val cardDetector = CardDetector()
     private val cardTracker = CardTracker()
+    private val cardNormalizer = CardNormalizer()
     private val processedCards = mutableSetOf<Int>()
     private var calibrated = false
     private var frameCount = 0
 
+    /** Exposed for debug overlay — last normalization results per frame. */
+    val normalizer: CardNormalizer get() = cardNormalizer
+
+    /** Detection metadata for the most recent frame (for overlay). */
+    @Volatile
+    var lastDetections: List<CardRegion> = emptyList()
+        private set
+
     /**
-     * Process a single camera frame through detection + tracking.
+     * Process a single camera frame through detection + tracking + normalization.
      */
     fun processFrame(frameBitmap: Bitmap) {
         try {
@@ -42,41 +58,38 @@ class DetectionPipeline(
 
             // Log every 30th frame to avoid flooding logcat
             if (frameCount % 30 == 1) {
-                Log.d(TAG, "Frame #$frameCount: ${frameBitmap.width}x${frameBitmap.height}, processedCards=${processedCards.size}")
+                Log.d(TAG, "Frame #$frameCount: ${frameBitmap.width}x${frameBitmap.height}, " +
+                    "processedCards=${processedCards.size}")
             }
 
-            // Step 1: Detect
+            // Step 1: Detect card-shaped regions
             val detections = cardDetector.detectCards(frameBitmap)
+            lastDetections = detections
 
-            // Step 2: Track
+            // Step 2: Track detections across frames
             val matchMap = cardTracker.updateTracks(detections)
 
-            // Step 3: Fire callback for stable, unprocessed cards
+            // Step 3: Normalize stable, unprocessed cards
             for ((detIdx, trackingId) in matchMap) {
                 if (trackingId !in processedCards && cardTracker.isStableDetection(trackingId)) {
                     val cardRegion = detections[detIdx]
 
-                    // Expand bounding box by 20% to include card borders and text regions.
-                    // The edge-based detection finds the interior (art area) bounded by card
-                    // text edges — expanding ensures the name bar and collector line are included.
-                    // 20% is needed because the collector line sits at the very bottom edge.
-                    val expandFraction = 0.20f
-                    val expandX = (cardRegion.width * expandFraction).toInt()
-                    val expandY = (cardRegion.height * expandFraction).toInt()
-                    val expandedRegion = CardRegion(
-                        x = (cardRegion.x - expandX).coerceAtLeast(0),
-                        y = (cardRegion.y - expandY).coerceAtLeast(0),
-                        width = (cardRegion.width + 2 * expandX).coerceAtMost(frameBitmap.width - (cardRegion.x - expandX).coerceAtLeast(0)),
-                        height = (cardRegion.height + 2 * expandY).coerceAtMost(frameBitmap.height - (cardRegion.y - expandY).coerceAtLeast(0)),
-                        area = cardRegion.area
-                    )
+                    // Normalize: validate aspect ratio, expand, scale to canonical size
+                    val normResult = cardNormalizer.normalize(frameBitmap, cardRegion, trackingId)
 
-                    val cardBitmap = cardDetector.extractCardImage(frameBitmap, expandedRegion)
+                    if (normResult.rejected) {
+                        // Bad aspect ratio — skip this detection, allow re-evaluation
+                        Log.d(TAG, "Skipped trackingId=$trackingId: ${normResult.rejectReason}")
+                        continue
+                    }
+
+                    val cardBitmap = normResult.bitmap ?: continue
 
                     Log.d(TAG, "Card ready: trackingId=$trackingId, " +
                         "detected=${cardRegion.width}x${cardRegion.height}, " +
-                        "expanded=${expandedRegion.width}x${expandedRegion.height}, " +
-                        "cropBitmap=${cardBitmap.width}x${cardBitmap.height}")
+                        "aspect=${"%.3f".format(normResult.aspectRatio)}, " +
+                        "canonical=${cardBitmap.width}x${cardBitmap.height}, " +
+                        "conf=${"%.2f".format(normResult.confidence)}")
 
                     onCardReady(cardBitmap, trackingId)
                     processedCards.add(trackingId)

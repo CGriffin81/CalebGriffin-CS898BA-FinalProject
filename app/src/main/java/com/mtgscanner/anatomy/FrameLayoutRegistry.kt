@@ -47,10 +47,10 @@ class FrameLayoutRegistry {
             FrameLayoutTemplate(
                 frameType = FrameType.MODERN,
                 nameBar = ProportionalRect(
-                    top = 0.035f, bottom = 0.075f, left = 0.05f, right = 0.82f
+                    top = 0.02f, bottom = 0.10f, left = 0.05f, right = 0.82f
                 ),
                 manaCost = ProportionalRect(
-                    top = 0.035f, bottom = 0.075f, left = 0.82f, right = 0.95f
+                    top = 0.02f, bottom = 0.10f, left = 0.82f, right = 0.95f
                 ),
                 artwork = ProportionalRect(
                     top = 0.08f, bottom = 0.50f, left = 0.05f, right = 0.95f
@@ -173,10 +173,10 @@ class FrameLayoutRegistry {
             FrameLayoutTemplate(
                 frameType = FrameType.UNKNOWN,
                 nameBar = ProportionalRect(
-                    top = 0.035f, bottom = 0.075f, left = 0.05f, right = 0.82f
+                    top = 0.02f, bottom = 0.10f, left = 0.05f, right = 0.82f
                 ),
                 manaCost = ProportionalRect(
-                    top = 0.035f, bottom = 0.075f, left = 0.82f, right = 0.95f
+                    top = 0.02f, bottom = 0.10f, left = 0.82f, right = 0.95f
                 ),
                 artwork = ProportionalRect(
                     top = 0.08f, bottom = 0.50f, left = 0.05f, right = 0.95f

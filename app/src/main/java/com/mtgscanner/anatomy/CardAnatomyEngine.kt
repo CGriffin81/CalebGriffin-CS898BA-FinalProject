@@ -8,32 +8,25 @@ import com.mtgscanner.anatomy.model.RegionType
 import com.mtgscanner.anatomy.ocr.CardOcrResults
 import com.mtgscanner.anatomy.ocr.RegionOcrPipeline
 import com.mtgscanner.model.DetectedCardText
-import com.mtgscanner.ocr.OcrPipeline
 
 /**
- * Card Anatomy Engine — orchestrates the anatomy-aware recognition pipeline.
+ * Card Anatomy Engine — layout-driven recognition pipeline.
  *
  * Pipeline: CardBitmap → Anatomy Detection → Region-Specific OCR → DetectedCardText
  *
- * Instead of passing the full card bitmap directly to OCR and hoping the parser
- * can figure out which text is which, this engine first identifies card regions
- * (name bar, type line, collector info, etc.) then runs specialized OCR readers
- * on each region independently.
+ * This engine NEVER runs full-card OCR. It identifies card regions geometrically,
+ * then dispatches each region to its specialized OCR reader. No reader searches
+ * the entire card. No heuristic guesses where information might be.
  *
- * The engine preserves backward compatibility by producing [DetectedCardText],
- * which downstream components (Scryfall lookup, FuzzyMatcher, UI) already consume.
+ * If the anatomy detector cannot locate a region, that field is simply absent
+ * from the output — it is not "searched for" elsewhere on the card.
  *
  * @param anatomyDetector Rule-based card region detector
- * @param regionOcrPipeline Region-specific OCR readers
- * @param legacyOcrPipeline Legacy full-card OCR (used as fallback when anatomy fails)
+ * @param regionOcrPipeline Region-specific OCR readers (one per semantic field)
  */
 class CardAnatomyEngine(
     private val anatomyDetector: CardAnatomyDetector = CardAnatomyDetector(),
-    private val regionOcrPipeline: RegionOcrPipeline = RegionOcrPipeline(),
-    private val legacyOcrPipeline: OcrPipeline = OcrPipeline(),
-    // Kept for backward compat constructor
-    @Suppress("UNUSED_PARAMETER")
-    ocrPipeline: OcrPipeline = OcrPipeline()
+    private val regionOcrPipeline: RegionOcrPipeline = RegionOcrPipeline()
 ) {
     companion object {
         private const val TAG = "CardAnatomyEngine"
@@ -59,61 +52,62 @@ class CardAnatomyEngine(
         private set
 
     /**
-     * Analyze a card bitmap through the anatomy-aware pipeline.
+     * Analyze a card bitmap through the anatomy-driven pipeline.
      *
      * Steps:
-     * 1. Run CardAnatomyDetector to get CardLayout (region positions + confidence)
-     * 2. Run RegionOcrPipeline on individual regions (specialized per-region readers)
-     * 3. Assemble DetectedCardText from region results
-     * 4. Fallback to legacy OcrPipeline if anatomy produces nothing useful
+     * 1. Detect card anatomy → CardLayout with region positions
+     * 2. Run per-region OCR readers on their respective crops
+     * 3. Assemble DetectedCardText from structured region results
+     *
+     * No fallback to full-card OCR. No line searching. No guessing.
+     * If a region's OCR fails, that field is empty in the output.
      *
      * @param cardBitmap Expanded card crop from DetectionPipeline
      * @param trackingId Card tracking ID for correlation
-     * @return DetectedCardText (backward-compatible output for downstream consumers)
+     * @return DetectedCardText with fields populated only from their correct regions
      */
     suspend fun analyze(cardBitmap: Bitmap, trackingId: Int): DetectedCardText {
+        val totalStart = System.currentTimeMillis()
         Log.d(TAG, "analyze: trackingId=$trackingId, bitmap=${cardBitmap.width}x${cardBitmap.height}")
 
-        // Step 1: Detect card anatomy (fast, ~5-15ms)
+        // Stage 1: Detect card anatomy (deterministic geometry)
+        val anatomyStart = System.currentTimeMillis()
         val layout = anatomyDetector.detect(cardBitmap, FrameType.MODERN)
+        val anatomyMs = System.currentTimeMillis() - anatomyStart
         lastCardLayout = layout
         lastBitmapWidth = cardBitmap.width
         lastBitmapHeight = cardBitmap.height
 
-        Log.d(TAG, "Anatomy detected: ${layout.regions.size} regions, " +
-            "name=${layout.findRegion(RegionType.NAME_BAR)?.confidence ?: 0f}, " +
-            "collector=${layout.findRegion(RegionType.COLLECTOR_INFO)?.confidence ?: 0f}")
+        Log.d(TAG, "Stage 1 ANATOMY [${anatomyMs}ms]: ${layout.regions.size} regions, " +
+            "nameConf=${layout.findRegion(RegionType.NAME_BAR)?.confidence ?: 0f}, " +
+            "collConf=${layout.findRegion(RegionType.COLLECTOR_INFO)?.confidence ?: 0f}")
 
-        // Step 2: Run region-specific OCR readers
+        // Stage 2: Run field-specific OCR readers (concurrent, each on its own crop)
+        val ocrStart = System.currentTimeMillis()
         val ocrResults = regionOcrPipeline.recognizeAllRegions(cardBitmap, layout)
+        val ocrMs = System.currentTimeMillis() - ocrStart
         lastOcrResults = ocrResults
 
-        // Step 3: Assemble DetectedCardText from region results
+        // Stage 3: Assemble output directly from reader results — no parsing, no guessing
         val cardName = ocrResults.name?.name ?: ""
         val setCode = ocrResults.collector?.setCode ?: ""
         val collectorNumber = ocrResults.collector?.collectorNumber ?: ""
         val confidence = ocrResults.overallConfidence
 
-        Log.d(TAG, "Region OCR: name='$cardName' set='$setCode' cn='$collectorNumber' conf=$confidence")
-
-        // Step 4: Fallback to legacy pipeline if anatomy produced no usable name
-        if (cardName.isBlank()) {
-            Log.w(TAG, "Anatomy produced no name — falling back to legacy OCR")
-            val legacyResult = legacyOcrPipeline.recognizeCard(cardBitmap, trackingId)
-            if (legacyResult.cardName.isNotBlank()) {
-                Log.d(TAG, "Legacy fallback found: '${legacyResult.cardName}'")
-                return legacyResult
-            }
-        }
-
         val rawText = buildString {
-            ocrResults.name?.rawText?.let { if (it.isNotEmpty()) appendLine(it) }
-            ocrResults.typeLine?.rawText?.let { if (it.isNotEmpty()) appendLine(it) }
-            ocrResults.rules?.rawText?.let { if (it.isNotEmpty()) appendLine(it) }
-            ocrResults.collector?.rawText?.let { if (it.isNotEmpty()) appendLine(it) }
+            ocrResults.name?.rawText?.let { if (it.isNotEmpty()) appendLine("NAME: $it") }
+            ocrResults.typeLine?.rawText?.let { if (it.isNotEmpty()) appendLine("TYPE: $it") }
+            ocrResults.collector?.rawText?.let { if (it.isNotEmpty()) appendLine("COLL: $it") }
+            ocrResults.powerToughness?.rawText?.let { if (it.isNotEmpty()) appendLine("P/T: $it") }
         }
 
-        Log.d(TAG, "analyze complete: name='$cardName' set='$setCode' cn='$collectorNumber' conf=$confidence")
+        val totalMs = System.currentTimeMillis() - totalStart
+        Log.d(TAG, "Stage 2 OCR [${ocrMs}ms]: name='$cardName' set='$setCode' cn='$collectorNumber' " +
+            "conf=${"%.2f".format(confidence)}")
+        Log.d(TAG, "TOTAL [${totalMs}ms]: anatomy=${anatomyMs}ms + ocr=${ocrMs}ms")
+
+        // Expose timing for debug overlay
+        lastTimingMs = TimingMetrics(anatomyMs = anatomyMs, ocrMs = ocrMs, totalMs = totalMs)
 
         return DetectedCardText(
             trackingId = trackingId,
@@ -124,4 +118,18 @@ class CardAnatomyEngine(
             rawOcrText = rawText
         )
     }
+
+    /** Timing metrics from the last analyze() call. */
+    @Volatile
+    var lastTimingMs: TimingMetrics = TimingMetrics()
+        private set
 }
+
+/**
+ * Timing metrics for the anatomy pipeline stages.
+ */
+data class TimingMetrics(
+    val anatomyMs: Long = 0,
+    val ocrMs: Long = 0,
+    val totalMs: Long = 0
+)
