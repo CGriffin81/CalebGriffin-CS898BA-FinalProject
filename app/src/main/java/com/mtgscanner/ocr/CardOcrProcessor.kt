@@ -15,20 +15,17 @@ import kotlinx.coroutines.withContext
  * Optical Character Recognition processor for Magic card images.
  *
  * Uses Google ML Kit Text Recognition (Latin script, on-device) to extract text from card images.
- * Parses the recognized [Text] object using both spatial bounding boxes (P2-02) and regex
- * patterns to extract card name, set code, and collector number.
+ * Parses recognized text using a candidate-scoring approach rather than fixed positional assumptions.
  *
- * Name extraction (P2-02): Uses [Text.TextBlock.boundingBox] to find the text line whose
- * top edge is within the upper 12% of the card image — the Magic card name region.
+ * Name extraction: Evaluates every OCR line using weighted heuristics (vertical position,
+ * font size, title-case, word count, type-line exclusion) and selects the highest-scoring candidate.
  *
- * Set code extraction (P2-04): Supports both legacy parenthesis format `(LEA)` and
- * modern collector line format `042/274 R • M21`.
+ * Collector line identification: Identifies the collector line first using structural patterns,
+ * then extracts set code and collector number from it. Supports standard fractions (107/280),
+ * standalone numbers (107 M21), promo formats, and rejects power/toughness fractions.
  *
- * Collector number extraction (P2-03): Searches from the bottom of the text upward,
- * preferring the fraction format `NNN/NNN`.
- *
- * Confidence scoring (P2-05): Awards points only for plausible extractions —
- * rejects numeric-only names, validates set code length, and collector number format.
+ * Confidence: Reflects actual confidence in field correctness using per-field quality scores
+ * rather than a simple binary populated/empty check.
  */
 class CardOcrProcessor {
 
@@ -38,14 +35,6 @@ class CardOcrProcessor {
 
     /**
      * Process a card image using ML Kit OCR and return structured card fields.
-     *
-     * Uses spatial bounding boxes from the [Text] result to identify the card name
-     * by its position in the top region of the image (P2-02), rather than relying
-     * solely on text order.
-     *
-     * @param cardBitmap Cropped card image from the detection pipeline (RGB, variable size).
-     * @param trackingId Card tracking ID for correlation in logs.
-     * @return [DetectedCardText] with extracted fields and confidence score.
      */
     suspend fun processCardImage(
         cardBitmap: Bitmap,
@@ -58,7 +47,6 @@ class CardOcrProcessor {
             val image = InputImage.fromBitmap(cardBitmap, 0)
             val recognizedText = textRecognizer.process(image).await()
 
-            // Diagnostic: log what ML Kit returned
             val blockCount = recognizedText.textBlocks.size
             val lineCount = recognizedText.textBlocks.sumOf { it.lines.size }
             val rawText = recognizedText.text
@@ -70,7 +58,6 @@ class CardOcrProcessor {
                 return@withContext DetectedCardText(trackingId = trackingId)
             }
 
-            // Use spatial parsing (P2-02) with image height for bounding box anchoring
             val result = parseCardTextWithBounds(recognizedText, cardBitmap.height)
                 .copy(trackingId = trackingId)
 
@@ -85,316 +72,575 @@ class CardOcrProcessor {
         }
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    // MAIN PARSING ENTRY POINT
+    // ═══════════════════════════════════════════════════════════════════
+
     /**
-     * Parse recognized text using ML Kit's spatial bounding boxes (P2-02).
-     *
-     * The card name is identified by finding the text line whose bounding box top edge
-     * is within the upper 12% of the image. This is far more reliable than using
-     * the first line of raw text, which may be a mana cost or art noise.
-     *
-     * Falls back to the raw-text `parseCardText()` logic for set code and collector number
-     * since those use regex patterns that work well on the flat text representation.
-     *
-     * @param recognizedText The [Text] object from ML Kit with spatial data.
-     * @param imageHeight The height of the source image in pixels (for Y threshold calculation).
-     * @return [DetectedCardText] with `trackingId = -1` (caller sets the real ID).
+     * Parse recognized text using candidate-scoring approach.
+     * Evaluates all lines with heuristics and selects the best card name,
+     * then identifies the collector line and extracts set code + collector number.
      */
     internal fun parseCardTextWithBounds(recognizedText: Text, imageHeight: Int): DetectedCardText {
         val rawText = recognizedText.text
         val lines = rawText.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
 
-        // ─── DIAGNOSTIC: Dump all ML Kit lines with bounding boxes ───
-        Log.d(TAG, "╔══ FULL OCR DUMP (imageHeight=$imageHeight, ${lines.size} lines) ══")
-        Log.d(TAG, "║ Raw text: '${rawText.replace('\n', '|')}'")
-        var lineIdx = 0
-        for (block in recognizedText.textBlocks) {
-            for (line in block.lines) {
-                val box = line.boundingBox
-                val boxStr = if (box != null) "L=${box.left} T=${box.top} R=${box.right} B=${box.bottom}" else "null"
-                Log.d(TAG, "║ [$lineIdx] '${line.text}' → bbox($boxStr)")
-                lineIdx++
+        // Gather spatial info for all lines
+        val spatialLines = recognizedText.textBlocks
+            .flatMap { block -> block.lines }
+            .map { line ->
+                SpatialLine(
+                    text = line.text.trim(),
+                    top = line.boundingBox?.top ?: 0,
+                    bottom = line.boundingBox?.bottom ?: imageHeight,
+                    left = line.boundingBox?.left ?: 0,
+                    right = line.boundingBox?.right ?: 0,
+                    height = (line.boundingBox?.height() ?: 0),
+                    width = (line.boundingBox?.width() ?: 0)
+                )
             }
+            .filter { it.text.isNotEmpty() }
+
+        // ─── DIAGNOSTIC: Dump all lines ───
+        Log.d(TAG, "╔══ OCR DUMP (imageH=$imageHeight, ${spatialLines.size} spatial lines) ══")
+        spatialLines.forEachIndexed { i, sl ->
+            Log.d(TAG, "║ [$i] '${sl.text}' top=${sl.top} h=${sl.height} w=${sl.width}")
         }
-        Log.d(TAG, "╚══ END OCR DUMP ══")
+        Log.d(TAG, "╚══ END DUMP ══")
 
-        // P2-02: Extract name using spatial bounding boxes
-        val cardName = extractCardNameSpatial(recognizedText, imageHeight)
-            .ifEmpty { extractCardName(lines) } // fallback to text-order if spatial fails
+        // Step 1: Score all lines as card name candidates
+        val cardName = selectCardName(spatialLines, imageHeight)
 
-        val setCode = extractSetCode(lines)
-        val collectorNumber = extractCollectorNumber(lines)
-        val confidence = calculateConfidence(cardName, setCode, collectorNumber)
+        // Step 2: Identify collector line and extract set code + collector number
+        val collectorResult = identifyCollectorLine(spatialLines, lines, imageHeight)
 
-        Log.d(TAG, "parseCardTextWithBounds RESULT: name='$cardName' set='$setCode' " +
-            "collector='$collectorNumber' confidence=$confidence")
+        // Step 3: Calculate confidence reflecting correctness probability
+        val confidence = calculateConfidence(cardName, collectorResult, spatialLines, imageHeight)
+
+        Log.d(TAG, "FINAL RESULT: name='$cardName' set='${collectorResult.setCode}' " +
+            "collector='${collectorResult.collectorNumber}' confidence=$confidence")
 
         return DetectedCardText(
             trackingId = -1,
             cardName = cardName,
-            setCode = setCode,
-            collectorNumber = collectorNumber,
+            setCode = collectorResult.setCode,
+            collectorNumber = collectorResult.collectorNumber,
             ocrConfidence = confidence,
             rawOcrText = rawText
         )
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    // CARD NAME SELECTION (Scored Candidate Approach)
+    // ═══════════════════════════════════════════════════════════════════
+
     /**
-     * Extract the card name using ML Kit bounding boxes (P2-02).
+     * Evaluate every OCR line as a card name candidate using weighted heuristics.
+     * Returns the highest-scoring candidate.
      *
-     * Finds the text line whose bounding box top edge is within the upper 20% of
-     * the card image. This threshold accounts for the 15% expansion padding added by
-     * DetectionPipeline — the actual name bar (at ~5% of the real card) appears at
-     * approximately 15-16% of the expanded bitmap.
-     *
-     * If multiple lines qualify, takes the one with the largest bounding box width
-     * (the name is typically the widest text in that region).
-     *
-     * @param recognizedText ML Kit [Text] result with [Text.TextBlock] and [Text.Line] spatial data.
-     * @param imageHeight Image height in pixels for computing the 20% threshold.
-     * @return Card name string, or empty string if no text found in the name region.
+     * Heuristics:
+     * - Vertical position: higher lines score better (name is at top of card)
+     * - Font size (bbox height): larger text scores better (name is largest text)
+     * - Title-case probability: MTG names are typically title-cased
+     * - Word count: 1-4 words preferred (most MTG names)
+     * - Punctuation penalty: names rarely have heavy punctuation
+     * - Type-line exclusion: penalizes known MTG type words
+     * - Mana/number penalty: rejects lines that are mostly numbers or symbols
      */
-    private fun extractCardNameSpatial(recognizedText: Text, imageHeight: Int): String {
-        val nameThresholdY = (imageHeight * 0.20f).toInt()
-        Log.d(TAG, "extractCardNameSpatial: imageHeight=$imageHeight, threshold=$nameThresholdY (20%)")
+    private fun selectCardName(spatialLines: List<SpatialLine>, imageHeight: Int): String {
+        if (spatialLines.isEmpty()) return ""
 
-        // Collect all lines with their bounding boxes
-        val allLines = recognizedText.textBlocks.flatMap { block -> block.lines }
-        val candidateLines = allLines
-            .filter { line ->
-                val top = line.boundingBox?.top ?: Int.MAX_VALUE
-                top < nameThresholdY
+        val maxHeight = spatialLines.maxOf { it.height }.coerceAtLeast(1)
+
+        data class ScoredCandidate(val text: String, val score: Float, val breakdown: String)
+
+        val candidates = spatialLines.map { line ->
+            var score = 0f
+            val reasons = mutableListOf<String>()
+
+            val text = line.text
+
+            // Skip lines that are clearly not names
+            if (text.length < 2 || !text.any { it.isLetter() }) {
+                return@map ScoredCandidate(text, -1f, "REJECTED: too short or no letters")
             }
-            .filter { line ->
-                // Must be a plausible name: ≥2 chars, contains a letter
-                line.text.trim().length >= 2 && line.text.any { it.isLetter() }
+
+            // 1. Vertical position score (0–25 points)
+            // Name is in the top 30% of the card. Lines near the top get full points.
+            val verticalFraction = line.top.toFloat() / imageHeight.coerceAtLeast(1)
+            val positionScore = when {
+                verticalFraction < 0.15f -> 25f
+                verticalFraction < 0.25f -> 20f
+                verticalFraction < 0.35f -> 12f
+                verticalFraction < 0.50f -> 5f
+                else -> 0f
+            }
+            score += positionScore
+            reasons.add("pos=${positionScore.toInt()}")
+
+            // 2. Font size score (0–20 points)
+            // Card name is typically the largest or second-largest text on the card
+            val sizeRatio = line.height.toFloat() / maxHeight
+            val sizeScore = (sizeRatio * 20f).coerceIn(0f, 20f)
+            score += sizeScore
+            reasons.add("size=${sizeScore.toInt()}")
+
+            // 3. Title-case score (0–15 points)
+            val words = text.split("\\s+".toRegex())
+            val titleCaseWords = words.count { w ->
+                w.isNotEmpty() && w[0].isUpperCase() && (w.length == 1 || w.drop(1).any { it.isLowerCase() })
+            }
+            val titleCaseRatio = if (words.isNotEmpty()) titleCaseWords.toFloat() / words.size else 0f
+            val titleScore = when {
+                titleCaseRatio >= 0.8f -> 15f
+                titleCaseRatio >= 0.5f -> 10f
+                text.all { it.isUpperCase() || !it.isLetter() } -> 3f // ALL CAPS (some promos)
+                else -> 2f
+            }
+            score += titleScore
+            reasons.add("title=${titleScore.toInt()}")
+
+            // 4. Word count score (0–15 points)
+            val wordCount = words.size
+            val wordScore = when (wordCount) {
+                1 -> 10f  // "Counterspell", "Terror"
+                2 -> 15f  // "Doom Whisperer", "Lightning Bolt"
+                3 -> 14f  // "Teferi's Protection", "Wrath of God"
+                4 -> 10f  // "Swords to Plowshares" (parsed as 3 w/ contraction)
+                5 -> 6f
+                else -> 2f
+            }
+            score += wordScore
+            reasons.add("words=$wordCount(${wordScore.toInt()})")
+
+            // 5. Punctuation penalty (-5 to 0)
+            val punctCount = text.count { it in "{}()[]•©™®/\\|" }
+            val punctPenalty = -(punctCount * 2.5f).coerceAtMost(15f)
+            score += punctPenalty
+            if (punctPenalty < 0) reasons.add("punct=${punctPenalty.toInt()}")
+
+            // 6. Type-line penalty (-30)
+            val upperText = text.uppercase()
+            val isTypeLine = MTG_TYPE_WORDS.any { typeWord ->
+                upperText.contains(typeWord)
+            }
+            if (isTypeLine) {
+                score -= 30f
+                reasons.add("TYPE_LINE(-30)")
             }
 
-        Log.d(TAG, "  ${allLines.size} total lines, ${candidateLines.size} in name region (<$nameThresholdY)")
-        candidateLines.forEach { line ->
-            Log.d(TAG, "  candidate: '${line.text}' bbox.top=${line.boundingBox?.top} width=${line.boundingBox?.width()}")
+            // 7. Mana/number penalty
+            val digitFraction = text.count { it.isDigit() }.toFloat() / text.length
+            if (digitFraction > 0.4f) {
+                score -= 20f
+                reasons.add("digits(-20)")
+            }
+
+            // 8. Collector-line penalty (has fraction pattern like 107/280)
+            if (text.matches(Regex(".*\\d{1,3}/\\d{2,3}.*"))) {
+                score -= 25f
+                reasons.add("collector_line(-25)")
+            }
+
+            // 9. Rules text penalty (common ability keywords)
+            val hasRulesKeywords = RULES_TEXT_INDICATORS.any { upperText.contains(it) }
+            if (hasRulesKeywords && wordCount > 4) {
+                score -= 15f
+                reasons.add("rules(-15)")
+            }
+
+            ScoredCandidate(text, score, reasons.joinToString(", "))
         }
 
-        if (candidateLines.isEmpty()) {
-            Log.d(TAG, "  NO spatial candidates — falling back to text-order")
-            return ""
+        // Log all candidates with scores
+        Log.d(TAG, "┌── NAME CANDIDATES (${candidates.size}) ──")
+        candidates.sortedByDescending { it.score }.forEach { c ->
+            val marker = if (c.score == candidates.maxOf { it.score }) "★" else " "
+            Log.d(TAG, "│ $marker [${String.format("%.1f", c.score)}] '${c.text}' → ${c.breakdown}")
         }
 
-        // If multiple lines in the name region, prefer the widest (most likely the card name)
-        val bestLine = candidateLines.maxByOrNull { line ->
-            line.boundingBox?.width() ?: 0
+        val best = candidates.maxByOrNull { it.score }
+        val result = if (best != null && best.score > 0f) best.text else ""
+        Log.d(TAG, "└── SELECTED NAME: '$result' (score=${best?.score ?: 0f})")
+        return result
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // COLLECTOR LINE IDENTIFICATION
+    // ═══════════════════════════════════════════════════════════════════
+
+    /**
+     * Identify the collector line, then extract set code and collector number from it.
+     *
+     * The collector line is identified by structural patterns rather than assuming
+     * a fixed position. Supports:
+     * - Standard fraction: "069/259 R • GRN" or "069/259 R GRN EN"
+     * - Standalone number with set: "107 M21" or "107 GRN"
+     * - Promo format: "P107" or "M0107"
+     * - Copyright line with set: "©2018 Wizards GRN"
+     * - Plain number in bottom region with adjacent set code
+     *
+     * Explicitly rejects power/toughness fractions (both parts ≤ 20, no set code nearby).
+     */
+    private fun identifyCollectorLine(
+        spatialLines: List<SpatialLine>,
+        textLines: List<String>,
+        imageHeight: Int
+    ): CollectorResult {
+        Log.d(TAG, "┌── COLLECTOR LINE SEARCH (${textLines.size} lines) ──")
+
+        // Score each line as a potential collector line
+        data class CollectorCandidate(
+            val line: String,
+            val collectorNumber: String,
+            val setCode: String,
+            val score: Float,
+            val reason: String
+        )
+
+        val candidates = mutableListOf<CollectorCandidate>()
+
+        for ((idx, line) in textLines.withIndex()) {
+            val verticalPosition = idx.toFloat() / textLines.size.coerceAtLeast(1)
+
+            // Use spatial data for vertical position if available
+            val spatialMatch = spatialLines.firstOrNull { it.text == line }
+            val spatialVertical = if (spatialMatch != null && imageHeight > 0) {
+                spatialMatch.top.toFloat() / imageHeight
+            } else {
+                verticalPosition
+            }
+
+            // ─── Pattern 1: Standard fraction (NNN/NNN) with set code ───
+            val fractionMatch = Regex("(\\d{1,4}[a-zA-Z]?)/(\\d{1,4})").find(line)
+            if (fractionMatch != null) {
+                val numerator = fractionMatch.groupValues[1]
+                val denominator = fractionMatch.groupValues[2]
+                val numVal = numerator.filter { it.isDigit() }.toIntOrNull() ?: 0
+                val denVal = denominator.toIntOrNull() ?: 0
+
+                // Reject power/toughness: both parts ≤ 20 and no set code token nearby
+                val isPowerToughness = numVal <= 20 && denVal <= 20
+                    && !line.contains(Regex("[A-Z]{2,5}"))
+                    && !line.contains(Regex("[•·]"))
+
+                if (isPowerToughness) {
+                    Log.d(TAG, "│ [$idx] REJECTED P/T: '$line' ($numerator/$denominator)")
+                } else {
+                    val stripped = numerator.trimStart('0').ifEmpty { "0" }
+                    val setCode = extractSetCodeFromLine(line)
+                    var score = 50f // base score for fraction format
+                    if (spatialVertical > 0.6f) score += 20f // bottom half bonus
+                    if (denVal >= 50) score += 10f // real sets have 50+ cards
+                    if (setCode.isNotEmpty()) score += 15f // set code confirmation
+                    candidates.add(CollectorCandidate(line, stripped, setCode, score,
+                        "fraction $numerator/$denominator, set=$setCode"))
+                }
+            }
+
+            // ─── Pattern 2: Standalone collector number + set code token ───
+            // Matches lines like "107 M21", "GRN 069", "107 R GRN"
+            val standaloneMatch = Regex("\\b(\\d{1,4}[a-zA-Z]?)\\b").findAll(line)
+            for (match in standaloneMatch) {
+                val num = match.groupValues[1]
+                val numVal = num.filter { it.isDigit() }.toIntOrNull() ?: 0
+                if (numVal in 1..999 && spatialVertical > 0.5f) {
+                    val setCode = extractSetCodeFromLine(line)
+                    if (setCode.isNotEmpty()) {
+                        val stripped = num.trimStart('0').ifEmpty { "0" }
+                        var score = 30f
+                        if (spatialVertical > 0.7f) score += 15f
+                        // Don't duplicate if already found as fraction
+                        if (candidates.none { it.collectorNumber == stripped && it.line == line }) {
+                            candidates.add(CollectorCandidate(line, stripped, setCode, score,
+                                "standalone $num + set=$setCode"))
+                        }
+                    }
+                }
+            }
+
+            // ─── Pattern 3: Legacy parenthesis format (SET) ───
+            val legacyMatch = Regex("\\(([A-Z0-9]{2,5})\\)", RegexOption.IGNORE_CASE).find(line)
+            if (legacyMatch != null) {
+                val setCandidate = legacyMatch.groupValues[1].uppercase()
+                if (setCandidate !in LANGUAGE_CODES) {
+                    // Look for a number on the same line
+                    val numMatch = Regex("\\b(\\d{1,4}[a-zA-Z]?)\\b").find(line)
+                    val collNum = numMatch?.groupValues?.get(1)?.trimStart('0')?.ifEmpty { "0" } ?: ""
+                    var score = 40f
+                    if (spatialVertical > 0.6f) score += 15f
+                    candidates.add(CollectorCandidate(line, collNum, setCandidate, score,
+                        "legacy ($setCandidate), collector=$collNum"))
+                }
+            }
         }
 
-        val result = bestLine?.text?.trim() ?: ""
-        Log.d(TAG, "  SELECTED: '$result'")
+        // Log all candidates
+        candidates.sortedByDescending { it.score }.forEach { c ->
+            Log.d(TAG, "│ [${String.format("%.0f", c.score)}] '${c.line}' → cn='${c.collectorNumber}' " +
+                "set='${c.setCode}' (${c.reason})")
+        }
+
+        val best = candidates.maxByOrNull { it.score }
+        val result = if (best != null) {
+            CollectorResult(best.collectorNumber, best.setCode, best.score)
+        } else {
+            CollectorResult("", "", 0f)
+        }
+        Log.d(TAG, "└── SELECTED: cn='${result.collectorNumber}' set='${result.setCode}' " +
+            "score=${result.score}")
         return result
     }
 
     /**
-     * Parse raw OCR text into structured card fields (text-order based).
-     *
-     * Used by unit tests and as a fallback when spatial parsing is not available.
-     * Splits on newlines and applies regex extraction for set code and collector number.
-     *
-     * @param rawText Raw string from ML Kit.
-     * @return [DetectedCardText] with `trackingId = -1`.
+     * Extract a set code token from a single line.
+     * Finds 2-5 character alphanumeric tokens that start with a letter,
+     * excluding known language codes. Does NOT filter against COMMON_WORDS
+     * because this is called on lines already identified as collector lines
+     * by structural patterns.
      */
-    internal fun parseCardText(rawText: String): DetectedCardText {
-        val lines = rawText.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
+    private fun extractSetCodeFromLine(line: String): String {
+        val upperLine = line.uppercase()
+        val tokenPattern = Regex("\\b([A-Z][A-Z0-9]{1,4})\\b")
 
-        val cardName = extractCardName(lines)
-        val setCode = extractSetCode(lines)
-        val collectorNumber = extractCollectorNumber(lines)
-        val confidence = calculateConfidence(cardName, setCode, collectorNumber)
-
-        return DetectedCardText(
-            trackingId = -1,
-            cardName = cardName,
-            setCode = setCode,
-            collectorNumber = collectorNumber,
-            ocrConfidence = confidence,
-            rawOcrText = rawText
-        )
-    }
-
-    /**
-     * Extract the card name from text lines (fallback when spatial data unavailable).
-     *
-     * Takes the first non-trivial line — ≥2 characters and contains at least one letter.
-     * Skips lone digits (e.g., mana cost fragments).
-     */
-    private fun extractCardName(lines: List<String>): String {
-        return lines.firstOrNull { line ->
-            line.length >= 2 && line.any { it.isLetter() }
-        } ?: ""
-    }
-
-    /**
-     * Extract the Magic set code from OCR lines (P2-04: legacy + modern formats).
-     *
-     * Strategy:
-     * 1. Legacy format: `(LEA)`, `(M21)`, `(2X2)` — parenthesized, searched in all lines.
-     * 2. Modern format: `042/274 R • M21` — set code as a 2–5 char alphanumeric token
-     *    at the end of the collector line (searched bottom-up). Excludes known language
-     *    codes (EN, FR, DE, etc.) that appear in the same region.
-     * 3. Standalone token: Any 2-5 char token matching [A-Z][A-Z0-9]{1,4} in the bottom
-     *    3 lines, even without a fraction. This handles cases where the crop doesn't
-     *    capture the full collector line but still has the set code visible.
-     *
-     * @param lines Non-empty, trimmed lines from raw OCR text.
-     * @return Set code string, or empty string if not found.
-     */
-    internal fun extractSetCode(lines: List<String>): String {
-        Log.d(TAG, "extractSetCode: examining ${lines.size} lines")
-
-        // Strategy 1: Legacy parenthesis format — (LEA), (M21), (2X2)
-        val legacyPattern = Regex("\\(([A-Z0-9]{2,5})\\)", RegexOption.IGNORE_CASE)
-        for (line in lines) {
-            legacyPattern.find(line.uppercase())?.let { match ->
-                val candidate = match.groupValues[1]
-                if (candidate !in LANGUAGE_CODES) {
-                    Log.d(TAG, "  setCode FOUND (legacy): '$candidate' in line '$line'")
-                    return candidate
-                }
-                Log.d(TAG, "  setCode REJECTED (language code): '$candidate' in line '$line'")
+        for (match in tokenPattern.findAll(upperLine)) {
+            val candidate = match.groupValues[1]
+            if (candidate.length in 2..5
+                && candidate !in LANGUAGE_CODES
+                && !candidate.all { it.isDigit() }
+            ) {
+                return candidate
             }
         }
-        Log.d(TAG, "  Strategy 1 (legacy): no match")
-
-        // Strategy 2: Modern format — search bottom lines for isolated 2-5 char token
-        // Modern collector lines look like: "042/274 R • M21" or "EN 042/274 M21 ©2020"
-        val modernPattern = Regex("\\b([A-Z][A-Z0-9]{1,4})\\b")
-        val bottom3 = lines.reversed().take(3)
-        Log.d(TAG, "  Strategy 2 (modern): checking bottom ${bottom3.size} lines for fraction+token")
-        for (line in bottom3) {
-            val upperLine = line.uppercase()
-            val hasFraction = upperLine.contains(Regex("\\d{1,3}/\\d{1,3}"))
-            if (!hasFraction) {
-                Log.d(TAG, "    SKIP (no fraction): '$line'")
-                continue
-            }
-            Log.d(TAG, "    HAS FRACTION: '$line'")
-
-            // Find all token candidates on this line
-            modernPattern.findAll(upperLine).forEach { match ->
-                val candidate = match.groupValues[1]
-                if (candidate.length in 2..5
-                    && candidate !in LANGUAGE_CODES
-                    && !candidate.all { it.isDigit() }
-                ) {
-                    Log.d(TAG, "  setCode FOUND (modern): '$candidate' in line '$line'")
-                    return candidate
-                }
-                Log.d(TAG, "    token REJECTED: '$candidate' (len=${candidate.length}, " +
-                    "isLang=${candidate in LANGUAGE_CODES}, allDigit=${candidate.all { it.isDigit() }})")
-            }
-        }
-        Log.d(TAG, "  Strategy 2 (modern): no match")
-
-        // Strategy 3: Standalone set code token in bottom lines (no fraction required).
-        // Handles cases where the crop captures set code text but not the full collector line.
-        // Requires 3+ chars to reduce false positives from creature type abbreviations.
-        val standaloneSetPattern = Regex("\\b([A-Z][A-Z0-9]{2,4})\\b")
-        Log.d(TAG, "  Strategy 3 (standalone): checking bottom ${bottom3.size} lines")
-        for (line in bottom3) {
-            val upperLine = line.uppercase()
-            standaloneSetPattern.findAll(upperLine).forEach { match ->
-                val candidate = match.groupValues[1]
-                if (candidate.length in 3..5
-                    && candidate !in LANGUAGE_CODES
-                    && candidate !in COMMON_WORDS
-                    && !candidate.all { it.isDigit() }
-                ) {
-                    Log.d(TAG, "  setCode FOUND (standalone): '$candidate' in line '$line'")
-                    return candidate
-                }
-                Log.d(TAG, "    standalone REJECTED: '$candidate' (isLang=${candidate in LANGUAGE_CODES}, " +
-                    "isCommon=${candidate in COMMON_WORDS})")
-            }
-        }
-        Log.d(TAG, "  Strategy 3 (standalone): no match")
-
-        Log.w(TAG, "  extractSetCode: ALL STRATEGIES FAILED for ${lines.size} lines")
         return ""
     }
 
-    /**
-     * Extract the collector number from OCR lines (P2-03: bottom-up + fraction preference).
-     *
-     * Searches from the last line upward. Prefers the fraction format `NNN/NNN`
-     * (e.g., `042/274`). Also supports the letter-suffixed variant `42a/280`.
-     * Returns the numerator with leading zeros stripped.
-     *
-     * Falls back to a standalone 1–3 digit number in the bottom half of the text.
-     */
-    internal fun extractCollectorNumber(lines: List<String>): String {
-        Log.d(TAG, "extractCollectorNumber: examining ${lines.size} lines (bottom-up)")
-
-        // Prefer fraction format with optional letter suffix: "042/274" or "42a/280"
-        val fractionPattern = Regex("\\b(\\d{1,3}[a-zA-Z]?)/(\\d{1,3})\\b")
-        for (line in lines.reversed()) {
-            fractionPattern.find(line)?.let { match ->
-                val numerator = match.groupValues[1]
-                val denominator = match.groupValues[2]
-                // Strip leading zeros from numeric-only part, keep letter suffix
-                val stripped = numerator.trimStart('0').ifEmpty { "0" }
-                Log.d(TAG, "  collector FOUND (fraction): '$stripped' from '$numerator/$denominator' in line '$line'")
-                return stripped
-            }
-        }
-        Log.d(TAG, "  No fraction pattern found in any line")
-
-        // Fallback: standalone 1–3 digit number with optional letter, bottom half only
-        val standalonePattern = Regex("\\b(\\d{1,3}[a-zA-Z]?)\\b")
-        val bottomHalf = if (lines.size > 2) lines.drop(lines.size / 2) else lines
-        Log.d(TAG, "  Fallback: checking bottom half (${bottomHalf.size} lines)")
-        for (line in bottomHalf.reversed()) {
-            standalonePattern.find(line)?.let { match ->
-                val candidate = match.groupValues[1]
-                if (candidate.any { it.isDigit() }) {
-                    Log.d(TAG, "  collector FOUND (standalone): '$candidate' in line '$line'")
-                    return candidate
-                }
-            }
-        }
-
-        Log.w(TAG, "  extractCollectorNumber: NOTHING FOUND in ${lines.size} lines")
-        return ""
-    }
+    // ═══════════════════════════════════════════════════════════════════
+    // CONFIDENCE SCORING
+    // ═══════════════════════════════════════════════════════════════════
 
     /**
-     * Calculate OCR confidence score (0.0–1.0) with plausibility validation (P2-05).
+     * Calculate confidence reflecting actual correctness probability.
      *
-     * Awards:
-     * - Card name (+0.5): ≥2 chars, contains letter, not all-digits, not all-uppercase-single-word
-     *   shorter than 2 chars.
-     * - Set code (+0.25): 2–5 alphanumeric characters, not a known language code.
-     * - Collector number (+0.25): matches `\d{1,3}[a-zA-Z]?` exactly.
+     * Unlike the previous binary approach (populated = +points), this considers:
+     * - Name quality: position score, title-case quality, absence of noise indicators
+     * - Set code quality: whether it was found on a collector line vs guessed
+     * - Collector number quality: fraction format vs standalone, plausible range
+     * - Overall coherence: all three fields from same line = higher confidence
      *
-     * Score < 0.6 triggers region-based fallback in [OcrPipeline].
+     * Returns 0.0–1.0 where:
+     * - 0.9–1.0: High confidence (name + set + collector all extracted cleanly)
+     * - 0.6–0.9: Moderate confidence (name good, partial collector info)
+     * - 0.3–0.6: Low confidence (name only, or uncertain extraction)
+     * - 0.0–0.3: Very low (mostly noise)
      */
     internal fun calculateConfidence(
+        cardName: String,
+        collectorResult: CollectorResult,
+        spatialLines: List<SpatialLine>,
+        imageHeight: Int
+    ): Float {
+        var score = 0f
+
+        // Name confidence (0–0.50)
+        if (cardName.isNotEmpty()) {
+            val nameLen = cardName.length
+            val hasLetter = cardName.any { it.isLetter() }
+            val isNotDigits = !cardName.all { it.isDigit() }
+            val isNotMana = !cardName.matches(Regex("^[\\d\\s{}()]+$"))
+            val wordCount = cardName.split("\\s+".toRegex()).size
+            val isTitleCase = cardName.split("\\s+".toRegex()).any {
+                it.isNotEmpty() && it[0].isUpperCase()
+            }
+
+            if (hasLetter && isNotDigits && isNotMana) {
+                score += 0.25f // base: we have something that looks like a name
+                if (nameLen >= 4) score += 0.05f // reasonable length
+                if (wordCount in 1..4) score += 0.05f // typical name word count
+                if (isTitleCase) score += 0.05f // looks like a proper name
+                if (!MTG_TYPE_WORDS.any { cardName.uppercase().contains(it) }) {
+                    score += 0.05f // not a type line
+                }
+                // Cap at 0.5 if name is from a high position
+                val nameInTopHalf = spatialLines.any {
+                    it.text == cardName && it.top < imageHeight * 0.4f
+                }
+                if (nameInTopHalf) score += 0.05f
+            }
+        }
+
+        // Set code confidence (0–0.25)
+        val setCode = collectorResult.setCode
+        if (setCode.isNotEmpty()) {
+            score += 0.10f // base: something extracted
+            if (setCode.length in 3..5) score += 0.05f // typical set code length
+            if (setCode.all { it.isLetterOrDigit() }) score += 0.05f
+            if (collectorResult.score > 40f) score += 0.05f // high collector-line confidence
+        }
+
+        // Collector number confidence (0–0.25)
+        val collectorNumber = collectorResult.collectorNumber
+        if (collectorNumber.isNotEmpty()) {
+            val numVal = collectorNumber.filter { it.isDigit() }.toIntOrNull() ?: 0
+            score += 0.08f // base: something extracted
+            if (numVal in 1..500) score += 0.07f // reasonable range for most sets
+            if (collectorResult.score >= 50f) score += 0.05f // came from fraction format
+            if (setCode.isNotEmpty()) score += 0.05f // paired with a set code
+        }
+
+        return score.coerceIn(0f, 1f)
+    }
+
+    /**
+     * Simplified confidence for the text-only parseCardText() method (no spatial data).
+     * Also used by unit tests directly.
+     */
+    internal fun calculateSimpleConfidence(
         cardName: String,
         setCode: String,
         collectorNumber: String
     ): Float {
         var score = 0f
 
-        val nameIsPlausible = cardName.length >= 2
-            && cardName.any { it.isLetter() }
-            && !cardName.all { it.isDigit() }
-            && !cardName.matches(Regex("^[\\d\\s]+$"))  // reject strings like "3 2" (mana costs)
-        if (nameIsPlausible) score += 0.5f
+        if (cardName.length >= 2 && cardName.any { it.isLetter() }
+            && !cardName.all { it.isDigit() }) {
+            score += 0.40f
+        }
+        if (setCode.length in 2..5 && setCode.all { it.isLetterOrDigit() }
+            && setCode.uppercase() !in LANGUAGE_CODES) {
+            score += 0.25f
+        }
+        if (collectorNumber.isNotEmpty()
+            && collectorNumber.matches(Regex("\\d{1,4}[a-zA-Z]?"))) {
+            score += 0.20f
+        }
 
-        val setIsPlausible = setCode.length in 2..5
-            && setCode.all { it.isLetterOrDigit() }
-            && setCode.uppercase() !in LANGUAGE_CODES
-        if (setIsPlausible) score += 0.25f
-
-        val collectorIsPlausible = collectorNumber.matches(Regex("\\d{1,3}[a-zA-Z]?"))
-        if (collectorIsPlausible) score += 0.25f
-
-        return score
+        return score.coerceIn(0f, 1f)
     }
+
+    /**
+     * Public overload for backward compatibility with tests.
+     * Delegates to [calculateSimpleConfidence].
+     */
+    internal fun calculateConfidence(
+        cardName: String,
+        setCode: String,
+        collectorNumber: String
+    ): Float = calculateSimpleConfidence(cardName, setCode, collectorNumber)
+
+    // ═══════════════════════════════════════════════════════════════════
+    // TEXT-ONLY PARSING (for unit tests / fallback without spatial data)
+    // ═══════════════════════════════════════════════════════════════════
+
+    /**
+     * Parse raw OCR text into structured card fields (text-order based).
+     * Used by unit tests and as a fallback when spatial parsing is not available.
+     */
+    internal fun parseCardText(rawText: String): DetectedCardText {
+        val lines = rawText.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
+
+        val cardName = extractCardNameFromLines(lines)
+        val collectorResult = extractCollectorFromLines(lines)
+        val confidence = calculateSimpleConfidence(
+            cardName, collectorResult.setCode, collectorResult.collectorNumber
+        )
+
+        return DetectedCardText(
+            trackingId = -1,
+            cardName = cardName,
+            setCode = collectorResult.setCode,
+            collectorNumber = collectorResult.collectorNumber,
+            ocrConfidence = confidence,
+            rawOcrText = rawText
+        )
+    }
+
+    /**
+     * Extract card name from text lines using heuristics (no spatial data).
+     * Prefers the first line that looks like a card name (title-case, not a type line,
+     * not a collector line, not rules text).
+     */
+    private fun extractCardNameFromLines(lines: List<String>): String {
+        for (line in lines) {
+            if (line.length < 2 || !line.any { it.isLetter() }) continue
+            if (line.all { it.isDigit() || it.isWhitespace() }) continue
+
+            val upper = line.uppercase()
+            // Skip type lines
+            if (MTG_TYPE_WORDS.any { upper.contains(it) }) continue
+            // Skip collector lines (has fraction or looks like "107/280 R GRN")
+            if (line.contains(Regex("\\d{2,}/\\d{2,}"))) continue
+            // Skip rules text indicators
+            if (RULES_TEXT_INDICATORS.any { upper.contains(it) } && line.split(" ").size > 4) continue
+            // Skip copyright
+            if (upper.contains("©") || upper.contains("WIZARDS")) continue
+
+            return line
+        }
+        // Fallback: first line with letters
+        return lines.firstOrNull { it.length >= 2 && it.any { c -> c.isLetter() } } ?: ""
+    }
+
+    /**
+     * Extract collector info from text lines (no spatial data).
+     */
+    private fun extractCollectorFromLines(lines: List<String>): CollectorResult {
+        // Search from bottom up for collector patterns
+        for (line in lines.reversed()) {
+            // Fraction format
+            val fractionMatch = Regex("(\\d{1,4}[a-zA-Z]?)/(\\d{1,4})").find(line)
+            if (fractionMatch != null) {
+                val num = fractionMatch.groupValues[1]
+                val den = fractionMatch.groupValues[2]
+                val numVal = num.filter { it.isDigit() }.toIntOrNull() ?: 0
+                val denVal = den.toIntOrNull() ?: 0
+
+                // Reject power/toughness
+                if (numVal <= 20 && denVal <= 20 && !line.contains(Regex("[A-Z]{2,5}"))) {
+                    continue
+                }
+
+                val stripped = num.trimStart('0').ifEmpty { "0" }
+                val setCode = extractSetCodeFromLine(line)
+                return CollectorResult(stripped, setCode, 50f)
+            }
+
+            // Legacy format
+            val legacyMatch = Regex("\\(([A-Z0-9]{2,5})\\)", RegexOption.IGNORE_CASE).find(line)
+            if (legacyMatch != null) {
+                val set = legacyMatch.groupValues[1].uppercase()
+                if (set !in LANGUAGE_CODES) {
+                    val numMatch = Regex("\\b(\\d{1,4}[a-zA-Z]?)\\b").find(line)
+                    val cn = numMatch?.groupValues?.get(1)?.trimStart('0')?.ifEmpty { "0" } ?: ""
+                    return CollectorResult(cn, set, 40f)
+                }
+            }
+        }
+
+        return CollectorResult("", "", 0f)
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // DATA CLASSES & CONSTANTS
+    // ═══════════════════════════════════════════════════════════════════
+
+    /** Spatial information for a single OCR line. */
+    internal data class SpatialLine(
+        val text: String,
+        val top: Int,
+        val bottom: Int,
+        val left: Int,
+        val right: Int,
+        val height: Int,
+        val width: Int
+    )
+
+    /** Result of collector line identification. */
+    internal data class CollectorResult(
+        val collectorNumber: String,
+        val setCode: String,
+        val score: Float
+    )
 
     companion object {
         private const val TAG = "CardOcrProcessor"
@@ -405,8 +651,7 @@ class CardOcrProcessor {
             "KR", "KO", "CS", "CT", "RU", "PH", "ZH"
         )
 
-        /** Common English words/abbreviations that could match set code patterns
-         *  but are NOT set codes. Prevents false positives from creature type text. */
+        /** Common words that should not be mistaken for set codes. */
         private val COMMON_WORDS = setOf(
             "THE", "AND", "FOR", "NOT", "YOU", "ALL", "CAN", "HAD",
             "HER", "WAS", "ONE", "OUR", "OUT", "ARE", "HAS", "HIS",
@@ -415,7 +660,24 @@ class CardOcrProcessor {
             "USE", "PAY", "PUT", "END", "TAP", "ADD", "ETB", "CMC",
             "EACH", "THAT", "WITH", "HAVE", "THIS", "WILL", "YOUR",
             "FROM", "THEY", "BEEN", "WHEN", "INTO", "THAN", "THEM",
-            "CARD", "DRAW", "GAIN", "LOSE", "LIFE", "TURN"
+            "CARD", "DRAW", "GAIN", "LOSE", "LIFE", "TURN",
+            "FLYING", "TRAMPLE", "HASTE", "REACH", "FLASH",
+            "DEATHTOUCH", "LIFELINK", "VIGILANCE", "MENACE"
+        )
+
+        /** MTG type-line words used to exclude type lines from name candidates. */
+        private val MTG_TYPE_WORDS = setOf(
+            "CREATURE", "INSTANT", "SORCERY", "ARTIFACT", "ENCHANTMENT",
+            "LAND", "PLANESWALKER", "LEGENDARY", "TRIBAL", "BATTLE",
+            "KINDRED", "BASIC"
+        )
+
+        /** Words that indicate rules/ability text (penalizes long lines containing these). */
+        private val RULES_TEXT_INDICATORS = setOf(
+            "TARGET", "DESTROY", "DAMAGE", "COUNTER", "RETURN",
+            "SACRIFICE", "EXILE", "GRAVEYARD", "BATTLEFIELD",
+            "CONTROLLER", "OPPONENT", "PLAYER", "SPELL", "ABILITY",
+            "SURVEIL", "SCRY", "MILL", "WARD", "EQUIP"
         )
     }
 }
