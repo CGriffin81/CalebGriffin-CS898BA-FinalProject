@@ -16,6 +16,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.mtgscanner.anatomy.CardAnatomyEngine
 import com.mtgscanner.camera.CameraPreviewManager
 import com.mtgscanner.data.ScannedCardDatabase
 import com.mtgscanner.data.ScannedCardEntity
@@ -55,7 +56,10 @@ fun AppRoot(
     navigator: AppNavigator,
     cameraPreviewManager: CameraPreviewManager,
     detectionPipeline: DetectionPipeline,
-    database: ScannedCardDatabase
+    database: ScannedCardDatabase,
+    cardAnatomyEngine: CardAnatomyEngine? = null,
+    showAnatomyOverlay: Boolean = false,
+    onToggleOverlay: () -> Unit = {}
 ) {
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -71,7 +75,10 @@ fun AppRoot(
                 Box(modifier = Modifier.fillMaxSize()) {
                     CameraScreen(
                         cameraPreviewManager = cameraPreviewManager,
-                        detectionPipeline = detectionPipeline
+                        detectionPipeline = detectionPipeline,
+                        cardAnatomyEngine = cardAnatomyEngine,
+                        showAnatomyOverlay = showAnatomyOverlay,
+                        onToggleOverlay = onToggleOverlay
                     )
 
                     // Back button overlay

@@ -1,270 +1,370 @@
 # MTG Scanner — Architecture & Runtime Behavior
-**Updated:** 2026-07-21 (OCR region extraction fix + diagnostic instrumentation)
+**Updated:** 2026-07-21 (Card Anatomy Engine architecture)
 
 ---
 
-## Pipeline Execution Diagram (Current Implementation)
+## Architecture Overview
+
+MTG Scanner uses a **Card Anatomy Pipeline** — a layout-first approach to card recognition.
+Instead of running OCR on the entire card image and guessing which text belongs to which field,
+the system first identifies the card's semantic regions using computer vision, then runs
+specialized OCR readers on each region independently.
+
+### Why the Architecture Changed
+
+The original OCR-first pipeline had fundamental problems:
+
+| Problem | Root Cause | Anatomy Solution |
+|---|---|---|
+| Type lines confused with card names | OCR sees all text, parser guesses semantics | Name reader only receives name bar bitmap |
+| P/T fractions confused with collector numbers | Single-pass regex doesn't know spatial context | P/T reader and Collector reader are separate |
+| Collector line often missing | Crop too small, region extraction wrong | Anatomy detector locates exact collector position |
+| Confidence doesn't reflect correctness | Binary "populated = confident" | Per-field confidence from specialized readers |
+| One-size-fits-all parsing | All frames treated identically | Layout templates per frame type |
+
+---
+
+## Pipeline Data Flow
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  CameraX (device-dependent resolution, KEEP_ONLY_LATEST)        │
-│  Delivers ImageProxy on single-threaded executor                 │
-└──────────────────────────────┬──────────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  CardFrameAnalyzer.analyze(image)                                │
-│  Thread: CameraPreviewManager executor                           │
-│  Action: image.toBitmap() → onFrameReady(bitmap)                 │
-│  Timing: ~15–30ms at 2992×2992                                   │
-└──────────────────────────────┬──────────────────────────────────┘
-                               │
-                               ▼
+│  CameraX (KEEP_ONLY_LATEST, device-dependent resolution)        │
+│  ImageProxy → toBitmap() → 2992×2992 on Galaxy S23              │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
+                           ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  DetectionPipeline.processFrame(bitmap)                           │
-│  Thread: Same executor (synchronous)                             │
-│                                                                   │
-│  ┌── CardDetector.detectCards(bitmap) ─────────────────────┐     │
-│  │  • Adaptive downscale (4× if >2000px)                   │     │
-│  │  • Grayscale → Sobel edges → Dilate → Flood-fill       │     │
-│  │  • Filter: area 1.5–60%, aspect 0.50–0.90, fill >25%   │     │
-│  │  • Timing: ~30–80ms                                     │     │
-│  └─────────────────────────────────────────────────────────┘     │
-│                                                                   │
-│  ┌── CardTracker.updateTracks(detections) ─────────────────┐     │
-│  │  • Center-distance matching (frame-calibrated threshold) │     │
-│  │  • STABILITY_FRAMES = 2 before "ready"                  │     │
-│  │  • Timing: <1ms                                          │     │
-│  └─────────────────────────────────────────────────────────┘     │
-│                                                                   │
-│  IF stable AND not in processedCards:                             │
-│    → Expand bounding box by 20% (captures name + collector)      │
-│    → extractCardImage(bitmap, expandedRegion)                     │
-│    → onCardReady(cardBitmap, trackingId)  ←── OWNED BY MAIN     │
-│    → processedCards.add(trackingId)                               │
-│                                                                   │
-│  onFrameAnalysis(detectionCount)  ←── OWNED BY CameraScreen     │
-└──────────────────────────────┬──────────────────────────────────┘
-                               │ onCardReady fires
-                               ▼
+│  • CardDetector: edge-based detection, flood-fill, aspect filter │
+│  • CardTracker: center-distance matching, 2-frame stability      │
+│  • Expand bounding box 20%                                       │
+│  → onCardReady(cardBitmap, trackingId)                           │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
+                           ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  MainActivity.setupDetectionPipelineCallback()                    │
-│  Thread: lifecycleScope.launch { ... } → Dispatchers.Main        │
+│  CardAnatomyEngine.analyze(cardBitmap, trackingId)               │
 │                                                                   │
-│  Step 1: ocrPipeline.recognizeCard(cardBitmap, trackingId)       │
-│    → OcrPreprocessor (pass-through)                              │
-│    → CardOcrProcessor.processCardImage() [Dispatchers.Default]   │
-│      → ML Kit textRecognizer.process(image).await()              │
-│      → parseCardTextWithBounds() (spatial + regex)               │
-│        → extractCardNameSpatial() [20% threshold]                │
-│        → extractSetCode() [legacy → modern → standalone]         │
-│        → extractCollectorNumber() [fraction → standalone]        │
-│    → If confidence < 0.6: recognizeByRegions() fallback          │
-│      → OcrPreprocessor.extractCardRegions() [expansion-aware]    │
-│    Timing: ~80–200ms (single pass), ~240–600ms (with fallback)   │
+│  ┌─ Stage 1: CardAnatomyDetector ─────────────────────────────┐ │
+│  │  • Select FrameLayoutTemplate from FrameLayoutRegistry      │ │
+│  │  • Convert proportional coords → pixel Rects                │ │
+│  │  • Refine bounds using horizontal edge detection            │ │
+│  │  • Validate with luminance variance per region              │ │
+│  │  → CardLayout (9 regions with bounds + confidence)          │ │
+│  └─────────────────────────────────────────────────────────────┘ │
 │                                                                   │
-│  Step 2: scryfallRepositoryResilience.findCardCandidatesResilient│
-│    → Check Room collection first (~1ms)                          │
-│    → Check SharedPreferences cache (~5ms)                        │
-│    → Strategy 1: /cards/{set}/{cn} [Dispatchers.IO]              │
-│    → Strategy 2: /cards/named?fuzzy= [Dispatchers.IO]            │
-│    → Strategy 3: /cards/search?q= [Dispatchers.IO]               │
-│    Timing: 0ms (cache hit) to 500ms (network)                    │
+│  ┌─ Stage 2: RegionOcrPipeline ───────────────────────────────┐ │
+│  │  • Crop each region from card bitmap                        │ │
+│  │  • Dispatch to specialized readers (concurrent):            │ │
+│  │    ├── NameOcr        → NameOcrResult                       │ │
+│  │    ├── TypeLineOcr    → TypeLineOcrResult                   │ │
+│  │    ├── CollectorOcr   → CollectorOcrResult                  │ │
+│  │    ├── RulesOcr       → RulesOcrResult                      │ │
+│  │    ├── ArtistOcr      → ArtistOcrResult                     │ │
+│  │    └── PowerToughnessOcr → PowerToughnessOcrResult          │ │
+│  │  → CardOcrResults (all regions aggregated)                  │ │
+│  └─────────────────────────────────────────────────────────────┘ │
 │                                                                   │
-│  Step 3: fuzzyCardMatcher.matchCard(detectedText, candidates)    │
-│    → Levenshtein scoring (60% name, 20% set, 20% collector)     │
-│    → ≤3 candidates: all preserved. >3: filter score > 0.5       │
-│    Timing: <1ms                                                   │
-│                                                                   │
-│  Step 4: navigator.navigateToVerification(cardVerification)      │
-│    → Compose state update → VerificationScreen renders           │
-└──────────────────────────────┬──────────────────────────────────┘
-                               │
-                               ▼
+│  ┌─ Stage 3: Assembly + Fallback ─────────────────────────────┐ │
+│  │  • Assemble DetectedCardText from region results            │ │
+│  │  • If no name found → fallback to legacy OcrPipeline        │ │
+│  │  → DetectedCardText (backward-compatible)                   │ │
+│  └─────────────────────────────────────────────────────────────┘ │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
+                           ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  VerificationScreen                                               │
-│  • Shows OCR results, Scryfall card image, match candidates      │
-│  • User confirms → saveCardToCollection() → Room                 │
-│  • User rejects/skips → clearProcessedCards() → back to camera   │
+│  Evidence Scoring & Candidate Generation                          │
+│  • CardEvidence: per-field value + confidence                    │
+│  • EvidenceLookupStrategy: plans Scryfall API call sequence      │
+│  • EvidenceCandidateScorer: weighted scoring (name 55%, type     │
+│    15%, set 12%, P/T 10%, collector 8%)                          │
+│  • ScryfallRepositoryResilience: executes planned lookups        │
+│  → List<CardMatchCandidate> ranked by score                      │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  VerificationScreen → User Confirm → Room Database               │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Callback Ownership (Critical Design Decision)
+## Component Diagram (UML-style)
 
-The pipeline has exactly two callback exit points from `DetectionPipeline`:
+```
+┌──────────────────────────────────────────────────────────────┐
+│                        MainActivity                            │
+│  owns: CardAnatomyEngine, DetectionPipeline, all network      │
+│  callback: onCardReady → analyze → lookup → navigate          │
+└──────┬───────────────────────────────┬───────────────────────┘
+       │                               │
+       ▼                               ▼
+┌──────────────┐              ┌─────────────────────┐
+│ Detection    │              │ CardAnatomyEngine    │
+│ Pipeline     │              │                     │
+│ ┌──────────┐ │   bitmap     │ ┌─────────────────┐ │
+│ │CardDetect│─┼──────────────▶│CardAnatomyDetect│ │
+│ │CardTrack │ │              │ │  + Registry     │ │
+│ └──────────┘ │              │ └────────┬────────┘ │
+└──────────────┘              │          │CardLayout │
+                              │          ▼          │
+                              │ ┌─────────────────┐ │
+                              │ │RegionOcrPipeline│ │
+                              │ │ ┌─────────────┐ │ │
+                              │ │ │NameOcr      │ │ │
+                              │ │ │TypeLineOcr  │ │ │
+                              │ │ │CollectorOcr │ │ │
+                              │ │ │RulesOcr     │ │ │
+                              │ │ │ArtistOcr    │ │ │
+                              │ │ │P/T Ocr      │ │ │
+                              │ │ └─────────────┘ │ │
+                              │ └────────┬────────┘ │
+                              │          │Results   │
+                              │          ▼          │
+                              │  DetectedCardText   │
+                              └─────────┬───────────┘
+                                        │
+                              ┌─────────▼───────────┐
+                              │ Evidence Scoring     │
+                              │ ┌─────────────────┐ │
+                              │ │CardEvidence     │ │
+                              │ │LookupStrategy   │ │
+                              │ │CandidateScorer  │ │
+                              │ └─────────────────┘ │
+                              └─────────┬───────────┘
+                                        │
+                              ┌─────────▼───────────┐
+                              │ Scryfall + Room      │
+                              └─────────────────────┘
+```
 
-| Callback | Owner | Purpose | Thread |
+---
+
+## Card Anatomy Detector
+
+The `CardAnatomyDetector` is the central geometry engine. It uses **rule-based deterministic
+computer vision** (no machine learning) to locate 9 semantic regions on a card.
+
+### Detection Strategy
+1. Select a `FrameLayoutTemplate` from the `FrameLayoutRegistry` based on frame type
+2. Convert proportional (0.0–1.0) coordinates to pixel Rects using image dimensions
+3. Refine region boundaries by scanning for strong horizontal edges near expected dividers
+4. Validate each region using luminance variance (text regions have higher variance)
+5. Assign per-region confidence based on content analysis
+
+### Detected Regions
+
+| Region | Content | Confidence Heuristic |
+|---|---|---|
+| NAME_BAR | Card title text | Moderate variance = text on colored background |
+| MANA_COST | Mana symbols | High variance = colored circles |
+| ARTWORK | Card illustration | Very high variance = complex image |
+| TYPE_LINE | "Creature — Demon" | Moderate variance = text |
+| RULES_TEXT | Ability text | Moderate variance from text content |
+| SET_SYMBOL | Rarity/set icon | High variance = colored icon |
+| COLLECTOR_INFO | Set code + number | Lower variance acceptable (small text) |
+| ARTIST_CREDIT | Artist name | Low contrast small text |
+| POWER_TOUGHNESS | P/T box (optional) | Contrast difference from surrounding area |
+
+---
+
+## Layout Templates
+
+Templates define where each region should be located on a specific frame type,
+using normalized 0.0–1.0 coordinates. This makes them resolution-independent.
+
+### Registered Frame Types
+
+| Frame Type | Era | P/T | Notes |
 |---|---|---|---|
-| `onCardReady` | **MainActivity** (exclusive) | OCR → Scryfall → Matcher → Navigate | Executor → lifecycleScope |
-| `onFrameAnalysis` | **CameraScreen** | UI detection count display | Executor (unsafe but tolerated) |
+| MODERN | 2015–present (M15+) | Yes | Most common in circulation |
+| CLASSIC | 2003–2014 (8th–M14) | Yes | Wider borders |
+| FULL_ART | Zendikar lands, Unstable | No | Art covers entire card |
+| BORDERLESS | Showcase, Extended Art | Yes | Art full-bleed behind text |
+| UNKNOWN | Fallback | Yes | Uses MODERN proportions |
 
-**Rule:** `CameraScreen` MUST NOT set `onCardReady`. This was the root cause of the runtime failure discovered on 2026-07-21.
+### Adding a New Layout
 
----
+```kotlin
+// 1. Add enum value to FrameType.kt
+enum class FrameType {
+    MODERN, CLASSIC, FULL_ART, BORDERLESS,
+    PLANESWALKER,  // ← add here
+    SAGA, SPLIT, UNKNOWN
+}
 
-## Observed Runtime Behavior (Device Testing)
+// 2. Create template with proportional coordinates
+val planeswalkerTemplate = FrameLayoutTemplate(
+    frameType = FrameType.PLANESWALKER,
+    nameBar = ProportionalRect(top = 0.03f, bottom = 0.07f, left = 0.05f, right = 0.82f),
+    manaCost = ProportionalRect(top = 0.03f, bottom = 0.07f, left = 0.82f, right = 0.95f),
+    // ... define all regions
+    powerToughness = null  // Planeswalkers have loyalty, not P/T
+)
 
-### Frame Resolution
-The Samsung Galaxy S23 delivers **2992×2992** square frames despite `setTargetResolution(1280, 720)`. CameraX's resolution hint is advisory — the HAL selects the closest supported output which on this device is a square crop.
-
-### Detection Performance
-| Metric | Measured |
-|---|---|
-| Frame resolution | 2992×2992 |
-| Internal processing resolution | 748×748 (4× downscale) |
-| Detection time per frame | ~30–80ms |
-| Effective frame rate into pipeline | ~7–12fps |
-| Stability threshold | 2 frames (~150–300ms) |
-| Total time to "Card Ready" | ~300–600ms from card entering frame |
-| Bounding box expansion | 20% on all sides |
-
-### Detection Algorithm
-Edge-based detection (not threshold-based). Finds card borders regardless of background brightness. Works on white desks, dark mats, and binder pages.
-
-Key parameters:
-- Edge threshold: 50 (rejects surface texture, catches card borders)
-- Aspect ratio: 0.50–0.90 (accommodates perspective distortion)
-- Minimum area: 1.5% of frame
-- Fill ratio: >25% of bounding box
-- Dilation: 2 passes for gap closure
-- Expansion: 20% on all sides (captures name bar + collector line)
-
-### Bounding Box Expansion & Region Extraction
-
-The edge-based detection finds the card's **interior art area**. To capture name and collector text, the bounding box is expanded 20% on all sides:
-
-```
-Expanded bitmap layout (20% expansion):
-  0%–14.3%    = expansion padding (background)
-  14.3%–85.7% = actual card content
-  85.7%–100%  = expansion padding (background)
+// 3. Register in FrameLayoutRegistry
+registry.register(planeswalkerTemplate)
 ```
 
-`OcrPreprocessor.extractCardRegions()` translates card-relative proportions to absolute bitmap coordinates using expansion-aware math.
-
-### OCR Extraction Strategies
-
-**Card Name:** Spatial (top 20% threshold) → fallback to first qualifying line.
-**Set Code:** Legacy `(LEA)` → Modern fraction-line token → Standalone 3-5 char token (bottom 3 lines).
-**Collector Number:** Fraction `NNN/NNN` bottom-up → Standalone digit in bottom half.
+No code changes to `CardAnatomyDetector` are needed — it automatically uses
+the template from the registry for any frame type.
 
 ---
 
-## Runtime Defects Found & Fixed
+## Specialized OCR Readers
 
-### Defect 1: Callback Overwrite (FIXED)
-- **Symptom:** "Card Ready" fires but OCR never activates
-- **Cause:** `CameraScreen.LaunchedEffect` set `detectionPipeline.onCardReady` to a local callback that passed a `Map` instead of `CardVerification`. AppRoot checked `if (cardData is CardVerification)` — always false.
-- **Fix:** Removed CameraScreen's `LaunchedEffect`. `onCardReady` owned exclusively by MainActivity.
+Each reader receives ONLY the bitmap for its assigned region. No reader sees
+the full card. No reader performs card identification or Scryfall lookup.
 
-### Defect 2: Detection on light backgrounds (FIXED)
-- **Symptom:** No detections on white desks/tables
-- **Cause:** Original threshold-based detector only found bright-on-dark. 
-- **Fix:** Replaced with edge-based detection using Sobel gradient magnitude.
+| Reader | Input | Output | Validation |
+|---|---|---|---|
+| `NameOcr` | Name bar crop | `NameOcrResult(name, confidence)` | Title-case, 1-5 words, widest line selection |
+| `TypeLineOcr` | Type line crop | `TypeLineOcrResult(types, subtypes)` | MTG vocabulary matching |
+| `CollectorOcr` | Collector crop | `CollectorOcrResult(cn, set, rarity)` | Fraction format, set code patterns, year rejection |
+| `RulesOcr` | Rules text crop | `RulesOcrResult(oracleText)` | Keyword presence |
+| `ArtistOcr` | Artist crop | `ArtistOcrResult(artistName)` | Prefix removal, title-case |
+| `PowerToughnessOcr` | P/T box crop | `PowerToughnessOcrResult(power, toughness)` | Fraction pattern, star values |
 
-### Defect 3: Tracker threshold too small for high-res frames (FIXED)
-- **Symptom:** Tracking IDs changed every frame, stability never reached
-- **Cause:** Fixed 50px threshold at 2992×2992 is too tight — normal bounding box jitter > 50px.
-- **Fix:** Frame-relative calibration. At 2992×2992, threshold is ~230px.
-
-### Defect 4: Stability too strict at low frame rates (FIXED)
-- **Symptom:** Cards must be held extremely still for seconds
-- **Cause:** 3-frame requirement at ~7fps = ~430ms minimum. Combined with jitter, often took 2–3 seconds.
-- **Fix:** Reduced to 2-frame stability (~200–300ms).
-
-### Defect 5: Region crops missed card content (FIXED)
-- **Symptom:** `set=''`, `collector=''`, confidence stuck at 0.5. Region fallback produced `blocks=0, lines=0`.
-- **Cause:** `OcrPreprocessor.extractCardRegions()` used raw bitmap percentages assuming the bitmap was an exact card crop. With expansion padding, those coordinates cropped empty background.
-- **Fix:** Added expansion-aware coordinate translation. Expansion increased 15% → 20%.
-
-### Defect 6: Spatial name threshold too tight (FIXED)
-- **Symptom:** `extractCardNameSpatial()` returned empty, fell back to text-order
-- **Cause:** 12% threshold was below where the name appears in an expanded bitmap (~15-16%).
-- **Fix:** Increased threshold to 20%.
-
-### Defect 7: Set code concatenation bug (FIXED)
-- **Symptom:** Potential for `setCode = "GRNGRN"` in region fallback
-- **Cause:** `OcrPipeline.recognizeByRegions()` concatenated both region set codes.
-- **Fix:** Changed to `collectorResult.setCode.ifEmpty { nameResult.setCode }`.
+All readers share a single `MlKitRecognizer` singleton for efficiency.
+Readers run **concurrently** via `coroutineScope { async { ... } }`.
 
 ---
 
-## Performance Observations
+## Evidence Scoring
 
-### Bottlenecks (in order of impact)
+OCR output is treated as **probabilistic evidence**, not truth.
 
-1. **Flood-fill on background** (~20–80ms): The largest connected non-edge region is always the background. It processes 300K+ pixels before being filtered by area.
-   - **Proposed fix:** Early termination when pixel count exceeds MAX_AREA threshold.
+### CardEvidence Model
+```kotlin
+data class CardEvidence(
+    val name: EvidenceField,           // "Doom Whisperer" @ 0.85 confidence
+    val collectorNumber: EvidenceField, // "69" @ 0.70 confidence (or absent)
+    val setCode: EvidenceField,        // "GRN" @ 0.60 confidence (or absent)
+    val typeLine: EvidenceField,       // "Creature — Demon" @ 0.80
+    val powerToughness: EvidenceField, // "6/6" @ 0.75 (or absent)
+    val frameType: FrameType
+)
+```
 
-2. **Bitmap allocation at full resolution** (~15–30ms): 36MB ARGB bitmap created from `toBitmap()` before downscale.
-   - **Cannot fix without camera changes** (HAL delivers 2992×2992 regardless of hint).
+### Scoring Weights
 
-3. **OCR fallback doubles ML Kit calls** (~160–400ms extra): When confidence < 0.6, two additional ML Kit calls run sequentially.
-   - **Proposed fix:** Run region OCR concurrently with `async/await`.
+| Field | Weight | Role |
+|---|---|---|
+| Name | 55% | Primary identification signal |
+| Type line | 15% | Creature vs spell disambiguation |
+| Set code | 12% | Printing disambiguation |
+| P/T | 10% | Creature confirmation |
+| Collector # | 8% | Exact printing (disambiguation only) |
 
-### What Does NOT Need Optimization
-
-- Tracking: <1ms per frame
-- Fuzzy matching: <1ms per card
-- Navigation state updates: <1ms
-- Room queries: <5ms
-- Retrofit setup: one-time cost
-
----
-
-## Architecture Principles (Lessons Learned)
-
-1. **Single callback owner.** Any lambda field on a shared object (`DetectionPipeline`) must have exactly one setter. If two components set the same field, the last writer wins silently.
-
-2. **Frame processing is the bottleneck budget.** With `KEEP_ONLY_LATEST`, the pipeline processes at 1/frame-time fps. All per-frame work must complete in <100ms to maintain responsive detection.
-
-3. **CameraX resolution is advisory, not mandatory.** The target device ignored `setTargetResolution(1280, 720)` and delivered 2992×2992. Detection code must handle arbitrary resolutions gracefully.
-
-4. **Stability threshold must scale with frame rate.** Higher resolution → slower processing → lower fps → longer wall-clock time per stability frame. The threshold must account for this.
-
-5. **OCR is a one-shot operation, not per-frame.** After `onCardReady` fires, the pipeline should ideally stop processing frames until OCR completes. Currently it continues detecting (which wastes CPU but doesn't cause bugs since `processedCards` prevents re-fire).
-
-6. **Region extraction must account for crop context.** When the crop includes padding beyond the card border, region proportions must be translated from card-relative to bitmap-absolute coordinates. Narrow slivers (< 10% height) produce zero ML Kit text blocks.
-
-7. **Unit tests need `unitTests.isReturnDefaultValues = true`** when production code uses `android.util.Log`. Without this, `Log.d()` throws RuntimeException in JVM unit tests.
+### Key Principles
+- Missing fields **never reject** candidates — they provide zero contribution
+- Low-confidence fields contribute proportionally less
+- A confident name match alone is sufficient for identification
+- Collector info only disambiguates between multiple candidates with the same name
+- Score is normalized: `Σ(match × weight × confidence) / Σ(weight × confidence)`
 
 ---
 
-## Diagnostic Instrumentation (Active — Remove Before Release)
+## Lookup Strategy Planning
 
-Verbose logging is enabled for runtime debugging of set code and collector number extraction:
+`EvidenceLookupStrategy` determines which Scryfall API calls to make:
 
-| Component | What it logs |
-|---|---|
-| `parseCardTextWithBounds()` | Full OCR dump: every ML Kit line with bounding box coordinates |
-| `extractCardNameSpatial()` | Threshold value, candidate lines, selection reason |
-| `extractSetCode()` | Strategy-by-strategy trace with accept/reject reasoning |
-| `extractCollectorNumber()` | Fraction search trace, fallback match reporting |
-| `OcrPreprocessor.extractCardRegions()` | Crop coordinates and dimensions |
-| `OcrPipeline.recognizeByRegions()` | Region dimensions and individual OCR results |
+| Condition | Strategy | API Call |
+|---|---|---|
+| Set + collector confident (>0.4) | Identity | `/cards/{set}/{cn}` |
+| Name confident (>0.3), length ≥3 | Fuzzy name | `/cards/named?fuzzy=` |
+| Name present, any confidence | General search | `/cards/search?q=` |
+| Name + type, type confident (>0.6) | Filtered search | `/cards/search?q=name t:type` |
 
-**Logcat filter:** `adb logcat -s CardOcrProcessor:D OcrPipeline:D OcrPreprocessor:D`
+Strategies are returned as an ordered list. Caller attempts each in order,
+stopping at the first successful result.
 
 ---
 
-## Current Test Coverage
+## Debug Overlay
+
+The `AnatomyDebugOverlay` composable renders CardLayout regions on the camera preview:
+
+| Region | Color | Label |
+|---|---|---|
+| Name Bar | Green | NAME |
+| Mana Cost | Orange | MANA |
+| Artwork | Purple | ART |
+| Type Line | Blue | TYPE |
+| Rules Text | Blue Grey | RULES |
+| Set Symbol | Pink | SET |
+| Collector Info | Yellow | COLL |
+| Artist Credit | Brown | ARTIST |
+| P/T | Red | P/T |
+
+Toggled via a tap on "🔍 Anatomy Overlay: ON/OFF" in the camera screen bottom panel.
+
+---
+
+## Test Coverage
 
 | Test File | Tests | Coverage |
 |---|---|---|
-| `PipelineHandoffTest.kt` | 10 | Callback ownership, stability, tracking, deduplication, navigator chain |
-| `DetectionPipelineIntegrationTest.kt` | 15 | Tracker logic, multi-card, center-distance, stability timing |
-| `OcrPipelineIntegrationTest.kt` | 36 | Text parsing, confidence scoring, regex patterns, set codes |
-| `FuzzyMatchingIntegrationTest.kt` | 13 | Levenshtein, scoring, filtering, single-candidate preservation |
-| **Total** | **74** | **0 failures, 10 skipped (require Android runtime)** |
+| `CardAnatomyDetectorTest.kt` | 33 | Registry, templates, proportional geometry, frame layouts, serialization, edge cases |
+| `PipelineHandoffTest.kt` | 10 | Callback ownership, stability, tracking, deduplication |
+| `DetectionPipelineIntegrationTest.kt` | 15 | Tracker logic, multi-card, center-distance |
+| `OcrPipelineIntegrationTest.kt` | 36 | Text parsing, confidence scoring, patterns |
+| `FuzzyMatchingIntegrationTest.kt` | 13 | Levenshtein, scoring, filtering |
+| **Total** | **107** | **0 failures, 13 skipped (require Android runtime)** |
 
 ---
 
-## Known Remaining Issues (Under Investigation)
+## Package Structure
 
-1. **Collector line visibility.** Diagnostic logging is active to determine whether the collector line reaches ML Kit or is cut off by the crop boundary. If 20% expansion is insufficient, further expansion or detection adjustment may be needed.
+```
+com.mtgscanner/
+├── anatomy/                    ← NEW: Card Anatomy Engine
+│   ├── CardAnatomyDetector.kt    Region detection (CV, no ML)
+│   ├── CardAnatomyEngine.kt      Pipeline orchestrator
+│   ├── FrameLayoutRegistry.kt    Template storage
+│   ├── model/
+│   │   ├── CardAnatomyModels.kt  RegionType, CardRegion, CardLayout
+│   │   ├── CardLayoutModel.kt    Geometry-only model with serialization
+│   │   ├── FrameLayoutTemplate.kt ProportionalRect, template data class
+│   │   └── FrameType.kt          Frame type enum
+│   └── ocr/                    ← NEW: Specialized readers
+│       ├── RegionOcrBase.kt       Shared ML Kit singleton
+│       ├── RegionOcrResult.kt     Result data classes
+│       ├── RegionOcrPipeline.kt   Concurrent reader orchestrator
+│       ├── NameOcr.kt             Name bar reader
+│       ├── TypeLineOcr.kt         Type line reader
+│       ├── CollectorOcr.kt        Collector info reader
+│       ├── RulesOcr.kt            Rules text reader
+│       ├── ArtistOcr.kt           Artist credit reader
+│       └── PowerToughnessOcr.kt   P/T reader
+├── camera/                     Camera + frame delivery
+├── detection/                  Card detection + tracking (unchanged)
+├── matching/                   ← ENHANCED: Evidence-based scoring
+│   ├── FuzzyCardMatcher.kt       Legacy scorer (retained)
+│   ├── CardEvidence.kt           Evidence model with per-field confidence
+│   ├── EvidenceCandidateScorer.kt Weighted candidate scoring
+│   └── EvidenceLookupStrategy.kt  API call planning
+├── model/                      Domain models (unchanged)
+├── network/                    Scryfall + resilience (unchanged)
+├── ocr/                        Legacy OCR (retained as fallback)
+├── data/                       Room database (unchanged)
+└── ui/                         ← ENHANCED: Debug overlay
+    ├── AnatomyDebugOverlay.kt    Region visualization
+    ├── CameraScreen.kt           With overlay toggle
+    └── ...
+```
 
-2. **Power/toughness false match.** `extractCollectorNumber()` can match "6/6" (power/toughness) as a collector fraction if the real collector line is absent. Needs a guard rejecting fractions where both numbers are < 20.
+---
 
-3. **Region fallback wasted cycles.** When full-card OCR gets a name (confidence 0.5) but not set/collector, the region fallback runs but may not help if the bottom of the card isn't in the crop. Consider skipping fallback and proceeding directly to Scryfall fuzzy name lookup when name confidence alone is high.
+## Architecture Principles
+
+1. **Layout before OCR.** Understand WHERE regions are before attempting to read text.
+2. **Single responsibility per reader.** Each OCR reader handles exactly one region type.
+3. **Evidence, not truth.** OCR output is probabilistic; missing data doesn't reject candidates.
+4. **Template-driven geometry.** New frame types require only data (a template), not new code.
+5. **Concurrent execution.** Region readers run in parallel via coroutines.
+6. **Graceful fallback.** If anatomy produces nothing, the legacy full-card OCR still runs.
+7. **Debug observability.** Every intermediate result is logged and overlay-visualizable.
+8. **Single callback owner.** DetectionPipeline.onCardReady owned exclusively by MainActivity.

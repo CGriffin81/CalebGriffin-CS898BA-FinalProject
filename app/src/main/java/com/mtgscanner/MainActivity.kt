@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import com.mtgscanner.anatomy.CardAnatomyEngine
 import com.mtgscanner.camera.CameraPreviewManager
 import com.mtgscanner.data.ScannedCardDatabase
 import com.mtgscanner.detection.CardDetector
@@ -67,6 +68,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var cardTracker: CardTracker
     private lateinit var detectionPipeline: DetectionPipeline
     private lateinit var ocrPipeline: OcrPipeline
+    private lateinit var cardAnatomyEngine: CardAnatomyEngine
     private lateinit var fuzzyCardMatcher: FuzzyCardMatcher
     private lateinit var scryfallApiClient: ScryfallApiClient
     private lateinit var scryfallRepositoryResilience: ScryfallRepositoryResilience
@@ -81,6 +83,9 @@ class MainActivity : ComponentActivity() {
     private var isOffline by mutableStateOf(false)
     private var showLowConfidenceWarning by mutableStateOf(false)
     private var lowConfidenceValue by mutableStateOf(0f)
+
+    /** Developer option: show anatomy debug overlay on camera preview. */
+    internal var showAnatomyOverlay by mutableStateOf(false)
 
     /**
      * Initialize the MainActivity with all required components.
@@ -121,6 +126,10 @@ class MainActivity : ComponentActivity() {
         // Initialize OCR pipeline
         ocrPipeline = OcrPipeline()
         Log.d(TAG, "OCR pipeline initialized")
+
+        // Initialize Card Anatomy Engine (wraps OCR with anatomy-aware detection)
+        cardAnatomyEngine = CardAnatomyEngine(ocrPipeline = ocrPipeline)
+        Log.d(TAG, "Card Anatomy Engine initialized")
 
         // Initialize fuzzy matching
         fuzzyCardMatcher = FuzzyCardMatcher()
@@ -179,7 +188,10 @@ class MainActivity : ComponentActivity() {
                         navigator = navigator,
                         cameraPreviewManager = cameraPreviewManager,
                         detectionPipeline = detectionPipeline,
-                        database = database
+                        database = database,
+                        cardAnatomyEngine = cardAnatomyEngine,
+                        showAnatomyOverlay = showAnatomyOverlay,
+                        onToggleOverlay = { showAnatomyOverlay = !showAnatomyOverlay }
                     )
                 }
             }
@@ -236,9 +248,9 @@ class MainActivity : ComponentActivity() {
                     Log.d(TAG, "Card detected (trackingId=$trackingId, retry=$retries), " +
                         "crop=${cardBitmap.width}x${cardBitmap.height}, starting OCR...")
 
-                    // Step 1: OCR recognition
-                    val detectedText = ocrPipeline.recognizeCard(cardBitmap, trackingId)
-                    Log.d(TAG, "OCR result: '${detectedText.cardName}' (confidence=${detectedText.ocrConfidence})")
+                    // Step 1: Card Anatomy Engine (detection + OCR)
+                    val detectedText = cardAnatomyEngine.analyze(cardBitmap, trackingId)
+                    Log.d(TAG, "Anatomy+OCR result: '${detectedText.cardName}' (confidence=${detectedText.ocrConfidence})")
 
                     // Guard: If OCR produced no usable card name
                     if (detectedText.cardName.isBlank()) {
