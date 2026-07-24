@@ -27,7 +27,7 @@ class CardNormalizer {
         private const val CARD_ASPECT_RATIO = 0.716f  // 63/88
 
         /** Acceptable range for detected aspect ratio (accounts for perspective) */
-        private const val MIN_ASPECT_RATIO = 0.55f
+        private const val MIN_ASPECT_RATIO = 0.50f
         private const val MAX_ASPECT_RATIO = 0.85f
 
         /** Expansion fraction applied to detected region (captures name + collector) */
@@ -78,14 +78,32 @@ class CardNormalizer {
             return result
         }
 
-        // Step 2: Expand bounding box
-        val expandX = (region.width * EXPAND_FRACTION).toInt()
-        val expandY = (region.height * EXPAND_FRACTION).toInt()
+        // Step 2: Expand bounding box with margin for rotation correction
+        // Add extra 5% beyond the standard expansion to ensure rotated card
+        // content isn't clipped after deskewing.
+        val expandFrac = EXPAND_FRACTION + 0.05f
+        val expandX = (region.width * expandFrac).toInt()
+        val expandY = (region.height * expandFrac).toInt()
+
+        // Force the expanded region to standard card aspect ratio (0.716 = w/h).
+        var expWidth = region.width + 2 * expandX
+        var expHeight = region.height + 2 * expandY
+        val currentAspect = expWidth.toFloat() / expHeight.toFloat()
+
+        if (currentAspect < CARD_ASPECT_RATIO - 0.05f) {
+            expWidth = (expHeight * CARD_ASPECT_RATIO).toInt()
+        } else if (currentAspect > CARD_ASPECT_RATIO + 0.05f) {
+            expHeight = (expWidth / CARD_ASPECT_RATIO).toInt()
+        }
+
+        // Center on detected region
+        val centerX = region.x + region.width / 2
+        val centerY = region.y + region.height / 2
         val expanded = CardRegion(
-            x = (region.x - expandX).coerceAtLeast(0),
-            y = (region.y - expandY).coerceAtLeast(0),
-            width = (region.width + 2 * expandX).coerceAtMost(frameBitmap.width - (region.x - expandX).coerceAtLeast(0)),
-            height = (region.height + 2 * expandY).coerceAtMost(frameBitmap.height - (region.y - expandY).coerceAtLeast(0)),
+            x = (centerX - expWidth / 2).coerceAtLeast(0),
+            y = (centerY - expHeight / 2).coerceAtLeast(0),
+            width = expWidth.coerceAtMost(frameBitmap.width - (centerX - expWidth / 2).coerceAtLeast(0)),
+            height = expHeight.coerceAtMost(frameBitmap.height - (centerY - expHeight / 2).coerceAtLeast(0)),
             area = region.area
         )
 
@@ -96,9 +114,13 @@ class CardNormalizer {
         val safeH = expanded.height.coerceAtMost(frameBitmap.height - safeY).coerceAtLeast(1)
         val cropped = Bitmap.createBitmap(frameBitmap, safeX, safeY, safeW, safeH)
 
-        // Step 4: Scale to canonical size
-        val canonical = Bitmap.createScaledBitmap(cropped, CANONICAL_WIDTH, CANONICAL_HEIGHT, true)
-        if (cropped != canonical) cropped.recycle()
+        // Step 4: Estimate rotation and deskew
+        val deskewed = deskewCard(cropped)
+
+        // Step 5: Scale to canonical size
+        val canonical = Bitmap.createScaledBitmap(deskewed, CANONICAL_WIDTH, CANONICAL_HEIGHT, true)
+        if (deskewed != canonical && deskewed != cropped) deskewed.recycle()
+        if (cropped != canonical && cropped != deskewed) cropped.recycle()
 
         // Compute confidence: closer to ideal aspect ratio = higher confidence
         val aspectDeviation = kotlin.math.abs(aspectRatio - CARD_ASPECT_RATIO)
@@ -121,6 +143,118 @@ class CardNormalizer {
         )
         lastResult = result
         return result
+    }
+
+    /**
+     * Estimate and correct card rotation (deskew).
+     *
+     * Strategy: detect the dominant horizontal edge in the top 30% of the image
+     * (the name bar / art border is a strong horizontal line). Measure its angle
+     * from true horizontal and rotate the bitmap to correct it.
+     *
+     * If the angle is < 1°, skip rotation (not worth the quality loss).
+     * If the angle is > 15°, skip rotation (probably not a card or too distorted).
+     *
+     * Uses sampling-based edge angle estimation — no OpenCV dependency.
+     */
+    private fun deskewCard(bitmap: Bitmap): Bitmap {
+        val w = bitmap.width
+        val h = bitmap.height
+
+        // Sample the top 30% for horizontal edge detection
+        val searchHeight = (h * 0.3f).toInt()
+        if (searchHeight < 10 || w < 20) return bitmap
+
+        // Find the strongest horizontal edge row in the top region
+        // by computing the average vertical gradient across each row
+        var bestRow = -1
+        var bestStrength = 0
+        val stepX = (w / 30).coerceAtLeast(1) // Sample ~30 points per row
+
+        for (y in 5 until searchHeight - 5) {
+            var rowStrength = 0
+            var x = 5
+            while (x < w - 5) {
+                val above = luminanceAt(bitmap, x, y - 2)
+                val below = luminanceAt(bitmap, x, y + 2)
+                rowStrength += kotlin.math.abs(below - above)
+                x += stepX
+            }
+            if (rowStrength > bestStrength) {
+                bestStrength = rowStrength
+                bestRow = y
+            }
+        }
+
+        if (bestRow < 0) return bitmap
+
+        // Estimate angle: compare edge Y position at left vs right
+        val leftY = findEdgeY(bitmap, bestRow, w / 6, stepX = 1)
+        val rightY = findEdgeY(bitmap, bestRow, w * 5 / 6, stepX = 1)
+
+        if (leftY < 0 || rightY < 0) return bitmap
+
+        val dx = (w * 4 / 6).toFloat()
+        val dy = (rightY - leftY).toFloat()
+        val angleRad = kotlin.math.atan2(dy, dx)
+        val angleDeg = Math.toDegrees(angleRad.toDouble()).toFloat()
+
+        // Skip if angle is negligible or too extreme
+        if (kotlin.math.abs(angleDeg) < 1f || kotlin.math.abs(angleDeg) > 15f) {
+            return bitmap
+        }
+
+        Log.d(TAG, "Deskew: angle=${"%.1f".format(angleDeg)}° (leftY=$leftY, rightY=$rightY)")
+
+        // Rotate the bitmap
+        val matrix = android.graphics.Matrix()
+        matrix.postRotate(-angleDeg, w / 2f, h / 2f)
+        val rotated = Bitmap.createBitmap(bitmap, 0, 0, w, h, matrix, true)
+
+        // Crop the rotated bitmap to remove black corners
+        // After rotation, valid content is inset by ~sin(angle) * dimension
+        val inset = (kotlin.math.abs(kotlin.math.sin(angleRad)) * kotlin.math.min(w, h) * 0.5f).toInt()
+        val cropX = inset.coerceAtMost(w / 10)
+        val cropY = inset.coerceAtMost(h / 10)
+        val cropW = (w - 2 * cropX).coerceAtLeast(w / 2)
+        val cropH = (h - 2 * cropY).coerceAtLeast(h / 2)
+
+        val result = Bitmap.createBitmap(rotated, cropX, cropY, cropW, cropH)
+        if (rotated != result) rotated.recycle()
+
+        return result
+    }
+
+    /** Find the exact Y of the strongest horizontal edge at a given X position, near expectedY. */
+    private fun findEdgeY(bitmap: Bitmap, expectedY: Int, x: Int, stepX: Int): Int {
+        val searchRange = 15
+        val yMin = (expectedY - searchRange).coerceAtLeast(2)
+        val yMax = (expectedY + searchRange).coerceAtMost(bitmap.height - 3)
+
+        var bestY = -1
+        var bestStr = 0
+
+        for (y in yMin..yMax) {
+            val above = luminanceAt(bitmap, x, y - 1)
+            val below = luminanceAt(bitmap, x, y + 1)
+            val str = kotlin.math.abs(below - above)
+            if (str > bestStr) {
+                bestStr = str
+                bestY = y
+            }
+        }
+        return if (bestStr > 20) bestY else -1
+    }
+
+    /** Get luminance (0–255) at a pixel. */
+    private fun luminanceAt(bitmap: Bitmap, x: Int, y: Int): Int {
+        val px = bitmap.getPixel(
+            x.coerceIn(0, bitmap.width - 1),
+            y.coerceIn(0, bitmap.height - 1)
+        )
+        return (android.graphics.Color.red(px) * 77 +
+                android.graphics.Color.green(px) * 150 +
+                android.graphics.Color.blue(px) * 29) shr 8
     }
 }
 

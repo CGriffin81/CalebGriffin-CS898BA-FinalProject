@@ -133,10 +133,10 @@ class CardAnatomyDetectorTest {
     // ══════════════════════════════════════════════════════════════════
 
     @Test
-    fun `modern template name bar is in top 10 percent`() {
+    fun `modern template name bar is in top 12 percent`() {
         val template = registry.getTemplate(FrameType.MODERN)
-        assertTrue("name top < 5%", template.nameBar.top < 0.05f)
-        assertTrue("name bottom <= 10%", template.nameBar.bottom <= 0.10f)
+        assertTrue("name top == 0", template.nameBar.top == 0.0f)
+        assertTrue("name bottom <= 12%", template.nameBar.bottom <= 0.12f)
     }
 
     @Test
@@ -159,7 +159,7 @@ class CardAnatomyDetectorTest {
     @Test
     fun `modern template collector info is at card bottom`() {
         val template = registry.getTemplate(FrameType.MODERN)
-        assertTrue("collector top > 90%", template.collectorInfo.top > 0.90f)
+        assertTrue("collector top > 88%", template.collectorInfo.top > 0.88f)
         assertTrue("collector bottom <= 100%", template.collectorInfo.bottom <= 1.0f)
     }
 
@@ -242,11 +242,10 @@ class CardAnatomyDetectorTest {
     // ══════════════════════════════════════════════════════════════════
 
     @Test
-    fun `borderless template name is at or higher than modern`() {
-        val modern = registry.getTemplate(FrameType.MODERN)
+    fun `borderless template has reasonable name position`() {
         val borderless = registry.getTemplate(FrameType.BORDERLESS)
-        assertTrue("Borderless name top <= Modern name top",
-            borderless.nameBar.top <= modern.nameBar.top)
+        assertTrue("Borderless name top < 5%", borderless.nameBar.top < 0.05f)
+        assertTrue("Borderless name bottom < 10%", borderless.nameBar.bottom < 0.10f)
     }
 
     @Test
@@ -348,8 +347,8 @@ class CardAnatomyDetectorTest {
             template.nameBar.right, template.nameBar.bottom, w, h
         )
         assertTrue("Name width > 300px at standard res", nameRect.width > 300)
-        assertTrue("Name height > 20px at standard res", nameRect.height > 20)
-        assertTrue("Name height < 80px at standard res", nameRect.height < 80)
+        assertTrue("Name height > 40px at standard res", nameRect.height > 40)
+        assertTrue("Name height < 100px at standard res", nameRect.height < 100)
     }
 
     @Test

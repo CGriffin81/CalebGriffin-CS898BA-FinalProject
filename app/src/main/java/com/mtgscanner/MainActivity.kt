@@ -88,6 +88,9 @@ class MainActivity : ComponentActivity() {
     /** Pipeline status for debug overlay. */
     internal var pipelineStatus by mutableStateOf(com.mtgscanner.ui.PipelineStatus())
 
+    /** Developer settings (persistent toggles for debug overlays). */
+    internal lateinit var devSettings: com.mtgscanner.devtools.DevSettings
+
     /**
      * Initialize the MainActivity with all required components.
      * Sets up database, network layer, detection pipeline, OCR, fuzzy matching, and camera.
@@ -99,6 +102,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         Log.d(TAG, "Initializing MTG Scanner...")
+
+        // Initialize developer settings (persistent)
+        devSettings = com.mtgscanner.devtools.DevSettings(this)
 
         // Initialize database first (needed by repository)
         database = ScannedCardDatabase.getInstance(this)
@@ -189,7 +195,8 @@ class MainActivity : ComponentActivity() {
                         cardAnatomyEngine = cardAnatomyEngine,
                         showAnatomyOverlay = showAnatomyOverlay,
                         onToggleOverlay = { showAnatomyOverlay = !showAnatomyOverlay },
-                        pipelineStatus = pipelineStatus
+                        pipelineStatus = pipelineStatus,
+                        devSettings = devSettings
                     )
                 }
             }

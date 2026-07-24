@@ -1,0 +1,295 @@
+{
+  "_meta": {
+    "version": 2,
+    "description": "Machine-readable MTG card anatomy definitions for Card Anatomy Engine",
+    "author": "Research & Technical Writer",
+    "date": "2026-07-21",
+    "coordinate_system": "Normalized 0.0–1.0, relative to card content area (excluding expansion padding)",
+    "aspect_ratio": 0.716,
+    "canonical_width": 488,
+    "canonical_height": 680,
+    "expansion_fraction": 0.20,
+    "notes": [
+      "All coordinates are card-relative (0,0 = top-left of card content, 1,1 = bottom-right)",
+      "The Card Anatomy Engine must apply expansion-aware translation before pixel conversion",
+      "Regions may overlap slightly at boundaries (name/art, type/rules)",
+      "P/T is null for non-creature cards — engine must detect presence",
+      "OCR priority determines lookup strategy order (1 = highest)"
+    ]
+  },
+  "frames": {
+    "MODERN": {
+      "display_name": "Modern Frame (M15+, 2015–present)",
+      "scryfall_frame": "2015",
+      "frequency": "~80% of cards in circulation",
+      "visual_identifiers": {
+        "border_color": "black",
+        "border_width_fraction": 0.035,
+        "name_bar_gradient": true,
+        "holofoil_stamp": true,
+        "type_bar_separate": true,
+        "collector_format": "NNN/NNN R • SET • LANG"
+      },
+      "regions": {
+        "name": { "left": 0.05, "top": 0.035, "right": 0.80, "bottom": 0.085, "ocr_priority": 1 },
+        "mana_cost": { "left": 0.80, "top": 0.035, "right": 0.95, "bottom": 0.085, "ocr_priority": 6 },
+        "artwork": { "left": 0.05, "top": 0.09, "right": 0.95, "bottom": 0.495, "ocr_priority": 0 },
+        "type_line": { "left": 0.05, "top": 0.50, "right": 0.82, "bottom": 0.55, "ocr_priority": 3 },
+        "set_symbol": { "left": 0.82, "top": 0.50, "right": 0.95, "bottom": 0.55, "ocr_priority": 7 },
+        "rules_text": { "left": 0.05, "top": 0.56, "right": 0.95, "bottom": 0.87, "ocr_priority": 5 },
+        "power_toughness": { "left": 0.72, "top": 0.88, "right": 0.93, "bottom": 0.93, "ocr_priority": 4 },
+        "collector_info": { "left": 0.05, "top": 0.93, "right": 0.50, "bottom": 0.97, "ocr_priority": 2 },
+        "artist_credit": { "left": 0.50, "top": 0.93, "right": 0.95, "bottom": 0.97, "ocr_priority": 8 }
+      },
+      "has_power_toughness": "detect",
+      "fallback_strategy": "full_bitmap_spatial"
+    },
+    "LEGACY": {
+      "display_name": "Legacy Frame (8th Edition–M14, 2003–2014)",
+      "scryfall_frame": "2003",
+      "frequency": "~10% of cards in collections",
+      "visual_identifiers": {
+        "border_color": "black",
+        "border_width_fraction": 0.04,
+        "name_bar_gradient": false,
+        "holofoil_stamp": false,
+        "type_bar_separate": true,
+        "collector_format": "NNN/NNN"
+      },
+      "regions": {
+        "name": { "left": 0.06, "top": 0.04, "right": 0.78, "bottom": 0.09, "ocr_priority": 1 },
+        "mana_cost": { "left": 0.78, "top": 0.04, "right": 0.94, "bottom": 0.09, "ocr_priority": 6 },
+        "artwork": { "left": 0.06, "top": 0.10, "right": 0.94, "bottom": 0.51, "ocr_priority": 0 },
+        "type_line": { "left": 0.06, "top": 0.52, "right": 0.82, "bottom": 0.57, "ocr_priority": 3 },
+        "set_symbol": { "left": 0.82, "top": 0.52, "right": 0.94, "bottom": 0.57, "ocr_priority": 7 },
+        "rules_text": { "left": 0.06, "top": 0.58, "right": 0.94, "bottom": 0.89, "ocr_priority": 5 },
+        "power_toughness": { "left": 0.70, "top": 0.89, "right": 0.93, "bottom": 0.94, "ocr_priority": 4 },
+        "collector_info": { "left": 0.06, "top": 0.95, "right": 0.50, "bottom": 0.98, "ocr_priority": 2 },
+        "artist_credit": { "left": 0.50, "top": 0.95, "right": 0.94, "bottom": 0.98, "ocr_priority": 8 }
+      },
+      "has_power_toughness": "detect",
+      "fallback_strategy": "full_bitmap_spatial"
+    },
+    "OLD_FRAME": {
+      "display_name": "Classic Frame (Alpha–7th Edition, 1993–2002)",
+      "scryfall_frame": "1993",
+      "frequency": "~3% of cards in collections (high value)",
+      "visual_identifiers": {
+        "border_color": "black_or_white",
+        "border_width_fraction": 0.05,
+        "name_bar_gradient": false,
+        "holofoil_stamp": false,
+        "type_bar_separate": false,
+        "collector_format": "none_or_NNN/NNN"
+      },
+      "regions": {
+        "name": { "left": 0.07, "top": 0.03, "right": 0.75, "bottom": 0.08, "ocr_priority": 1 },
+        "mana_cost": { "left": 0.75, "top": 0.03, "right": 0.93, "bottom": 0.08, "ocr_priority": 6 },
+        "artwork": { "left": 0.07, "top": 0.09, "right": 0.93, "bottom": 0.50, "ocr_priority": 0 },
+        "type_line": { "left": 0.07, "top": 0.51, "right": 0.93, "bottom": 0.56, "ocr_priority": 3 },
+        "set_symbol": { "left": 0.80, "top": 0.51, "right": 0.93, "bottom": 0.56, "ocr_priority": 7 },
+        "rules_text": { "left": 0.07, "top": 0.57, "right": 0.93, "bottom": 0.90, "ocr_priority": 5 },
+        "power_toughness": { "left": 0.68, "top": 0.90, "right": 0.93, "bottom": 0.96, "ocr_priority": 4 },
+        "collector_info": { "left": 0.07, "top": 0.96, "right": 0.93, "bottom": 0.99, "ocr_priority": 2 },
+        "artist_credit": { "left": 0.07, "top": 0.96, "right": 0.93, "bottom": 0.99, "ocr_priority": 8 }
+      },
+      "has_power_toughness": "detect",
+      "fallback_strategy": "name_only_fuzzy"
+    },
+    "BORDERLESS": {
+      "display_name": "Borderless (Showcase, Extended Art)",
+      "scryfall_frame": "2015",
+      "scryfall_frame_effects": ["borderless"],
+      "frequency": "~5% of cards",
+      "visual_identifiers": {
+        "border_color": "none",
+        "border_width_fraction": 0.0,
+        "name_bar_gradient": true,
+        "holofoil_stamp": true,
+        "type_bar_separate": true,
+        "collector_format": "NNN/NNN R • SET • LANG"
+      },
+      "regions": {
+        "name": { "left": 0.04, "top": 0.02, "right": 0.78, "bottom": 0.07, "ocr_priority": 1 },
+        "mana_cost": { "left": 0.78, "top": 0.02, "right": 0.96, "bottom": 0.07, "ocr_priority": 6 },
+        "artwork": { "left": 0.00, "top": 0.00, "right": 1.00, "bottom": 1.00, "ocr_priority": 0 },
+        "type_line": { "left": 0.04, "top": 0.50, "right": 0.82, "bottom": 0.55, "ocr_priority": 3 },
+        "set_symbol": { "left": 0.82, "top": 0.50, "right": 0.96, "bottom": 0.55, "ocr_priority": 7 },
+        "rules_text": { "left": 0.04, "top": 0.55, "right": 0.96, "bottom": 0.87, "ocr_priority": 5 },
+        "power_toughness": { "left": 0.72, "top": 0.87, "right": 0.94, "bottom": 0.925, "ocr_priority": 4 },
+        "collector_info": { "left": 0.04, "top": 0.94, "right": 0.50, "bottom": 0.98, "ocr_priority": 2 },
+        "artist_credit": { "left": 0.50, "top": 0.94, "right": 0.96, "bottom": 0.98, "ocr_priority": 8 }
+      },
+      "has_power_toughness": "detect",
+      "fallback_strategy": "full_bitmap_spatial"
+    },
+    "FULL_ART": {
+      "display_name": "Full-Art (Zendikar Lands, Unstable)",
+      "scryfall_frame": "2015",
+      "scryfall_frame_effects": ["fullart"],
+      "frequency": "~2% of cards",
+      "visual_identifiers": {
+        "border_color": "minimal",
+        "border_width_fraction": 0.02,
+        "name_bar_gradient": true,
+        "type_bar_separate": false,
+        "collector_format": "NNN/NNN R • SET • LANG"
+      },
+      "regions": {
+        "name": { "left": 0.05, "top": 0.04, "right": 0.80, "bottom": 0.08, "ocr_priority": 1 },
+        "mana_cost": { "left": 0.80, "top": 0.04, "right": 0.95, "bottom": 0.08, "ocr_priority": 6 },
+        "artwork": { "left": 0.00, "top": 0.00, "right": 1.00, "bottom": 1.00, "ocr_priority": 0 },
+        "type_line": { "left": 0.05, "top": 0.85, "right": 0.95, "bottom": 0.90, "ocr_priority": 3 },
+        "set_symbol": { "left": 0.85, "top": 0.85, "right": 0.95, "bottom": 0.90, "ocr_priority": 7 },
+        "rules_text": null,
+        "power_toughness": null,
+        "collector_info": { "left": 0.05, "top": 0.95, "right": 0.50, "bottom": 0.98, "ocr_priority": 2 },
+        "artist_credit": { "left": 0.50, "top": 0.95, "right": 0.95, "bottom": 0.98, "ocr_priority": 8 }
+      },
+      "has_power_toughness": "never",
+      "fallback_strategy": "name_only_fuzzy"
+    },
+    "DFC": {
+      "display_name": "Double-Faced Card (Front Face)",
+      "scryfall_frame": "2015",
+      "frequency": "~3% of cards",
+      "visual_identifiers": {
+        "border_color": "black",
+        "dfc_indicator": "top_left_sun_or_moon",
+        "dfc_indicator_position": { "left": 0.02, "top": 0.02, "right": 0.06, "bottom": 0.05 },
+        "collector_format": "NNN/NNN R • SET • LANG"
+      },
+      "regions": {
+        "name": { "left": 0.06, "top": 0.035, "right": 0.80, "bottom": 0.085, "ocr_priority": 1 },
+        "mana_cost": { "left": 0.80, "top": 0.035, "right": 0.95, "bottom": 0.085, "ocr_priority": 6 },
+        "artwork": { "left": 0.05, "top": 0.09, "right": 0.95, "bottom": 0.495, "ocr_priority": 0 },
+        "type_line": { "left": 0.05, "top": 0.50, "right": 0.82, "bottom": 0.55, "ocr_priority": 3 },
+        "set_symbol": { "left": 0.82, "top": 0.50, "right": 0.95, "bottom": 0.55, "ocr_priority": 7 },
+        "rules_text": { "left": 0.05, "top": 0.56, "right": 0.95, "bottom": 0.87, "ocr_priority": 5 },
+        "power_toughness": { "left": 0.72, "top": 0.88, "right": 0.93, "bottom": 0.93, "ocr_priority": 4 },
+        "collector_info": { "left": 0.05, "top": 0.93, "right": 0.50, "bottom": 0.97, "ocr_priority": 2 },
+        "artist_credit": { "left": 0.50, "top": 0.93, "right": 0.95, "bottom": 0.97, "ocr_priority": 8 }
+      },
+      "has_power_toughness": "detect",
+      "fallback_strategy": "full_bitmap_spatial"
+    },
+    "SAGA": {
+      "display_name": "Saga (Vertical Chapter Layout)",
+      "scryfall_frame": "2015",
+      "scryfall_frame_effects": ["saga"],
+      "frequency": "~1% of cards",
+      "visual_identifiers": {
+        "layout": "saga",
+        "art_position": "right_side",
+        "chapters": "left_side_numbered"
+      },
+      "regions": {
+        "name": { "left": 0.05, "top": 0.03, "right": 0.60, "bottom": 0.08, "ocr_priority": 1 },
+        "mana_cost": { "left": 0.60, "top": 0.03, "right": 0.68, "bottom": 0.08, "ocr_priority": 6 },
+        "artwork": { "left": 0.55, "top": 0.08, "right": 0.95, "bottom": 0.92, "ocr_priority": 0 },
+        "type_line": { "left": 0.05, "top": 0.08, "right": 0.55, "bottom": 0.12, "ocr_priority": 3 },
+        "set_symbol": { "left": 0.45, "top": 0.08, "right": 0.55, "bottom": 0.12, "ocr_priority": 7 },
+        "rules_text": { "left": 0.05, "top": 0.12, "right": 0.55, "bottom": 0.92, "ocr_priority": 5 },
+        "power_toughness": null,
+        "collector_info": { "left": 0.05, "top": 0.93, "right": 0.50, "bottom": 0.97, "ocr_priority": 2 },
+        "artist_credit": { "left": 0.50, "top": 0.93, "right": 0.95, "bottom": 0.97, "ocr_priority": 8 }
+      },
+      "has_power_toughness": "never",
+      "fallback_strategy": "name_only_fuzzy"
+    },
+    "ADVENTURE": {
+      "display_name": "Adventure Card (Sub-card in Rules)",
+      "scryfall_frame": "2015",
+      "frequency": "~1% of cards",
+      "visual_identifiers": {
+        "adventure_box": "left_side_of_rules_text",
+        "split_rules_area": true
+      },
+      "regions": {
+        "name": { "left": 0.05, "top": 0.035, "right": 0.80, "bottom": 0.085, "ocr_priority": 1 },
+        "mana_cost": { "left": 0.80, "top": 0.035, "right": 0.95, "bottom": 0.085, "ocr_priority": 6 },
+        "artwork": { "left": 0.05, "top": 0.09, "right": 0.95, "bottom": 0.495, "ocr_priority": 0 },
+        "type_line": { "left": 0.05, "top": 0.50, "right": 0.82, "bottom": 0.55, "ocr_priority": 3 },
+        "set_symbol": { "left": 0.82, "top": 0.50, "right": 0.95, "bottom": 0.55, "ocr_priority": 7 },
+        "rules_text": { "left": 0.55, "top": 0.56, "right": 0.95, "bottom": 0.87, "ocr_priority": 5 },
+        "power_toughness": { "left": 0.72, "top": 0.88, "right": 0.93, "bottom": 0.93, "ocr_priority": 4 },
+        "collector_info": { "left": 0.05, "top": 0.93, "right": 0.50, "bottom": 0.97, "ocr_priority": 2 },
+        "artist_credit": { "left": 0.50, "top": 0.93, "right": 0.95, "bottom": 0.97, "ocr_priority": 8 }
+      },
+      "has_power_toughness": "detect",
+      "fallback_strategy": "full_bitmap_spatial"
+    },
+    "BATTLE": {
+      "display_name": "Battle Card (Defense Counter)",
+      "scryfall_frame": "2015",
+      "frequency": "<1% of cards",
+      "visual_identifiers": {
+        "defense_box": "bottom_right_shield",
+        "landscape_orientation": "possible"
+      },
+      "regions": {
+        "name": { "left": 0.05, "top": 0.03, "right": 0.60, "bottom": 0.08, "ocr_priority": 1 },
+        "mana_cost": { "left": 0.60, "top": 0.03, "right": 0.68, "bottom": 0.08, "ocr_priority": 6 },
+        "artwork": { "left": 0.05, "top": 0.08, "right": 0.95, "bottom": 0.50, "ocr_priority": 0 },
+        "type_line": { "left": 0.05, "top": 0.50, "right": 0.95, "bottom": 0.55, "ocr_priority": 3 },
+        "set_symbol": { "left": 0.85, "top": 0.50, "right": 0.95, "bottom": 0.55, "ocr_priority": 7 },
+        "rules_text": { "left": 0.05, "top": 0.55, "right": 0.95, "bottom": 0.87, "ocr_priority": 5 },
+        "power_toughness": { "left": 0.72, "top": 0.87, "right": 0.93, "bottom": 0.925, "ocr_priority": 4 },
+        "collector_info": { "left": 0.05, "top": 0.93, "right": 0.50, "bottom": 0.97, "ocr_priority": 2 },
+        "artist_credit": { "left": 0.50, "top": 0.93, "right": 0.95, "bottom": 0.97, "ocr_priority": 8 }
+      },
+      "has_power_toughness": "always",
+      "fallback_strategy": "full_bitmap_spatial"
+    },
+    "TOKEN": {
+      "display_name": "Token Card (Large Art, Minimal Text)",
+      "scryfall_frame": "2015",
+      "frequency": "~2% of scanned items",
+      "visual_identifiers": {
+        "large_art": true,
+        "minimal_rules": true,
+        "name_full_width": true
+      },
+      "regions": {
+        "name": { "left": 0.05, "top": 0.03, "right": 0.95, "bottom": 0.07, "ocr_priority": 1 },
+        "mana_cost": null,
+        "artwork": { "left": 0.03, "top": 0.07, "right": 0.97, "bottom": 0.75, "ocr_priority": 0 },
+        "type_line": { "left": 0.05, "top": 0.75, "right": 0.95, "bottom": 0.80, "ocr_priority": 3 },
+        "set_symbol": { "left": 0.85, "top": 0.75, "right": 0.95, "bottom": 0.80, "ocr_priority": 7 },
+        "rules_text": { "left": 0.05, "top": 0.80, "right": 0.95, "bottom": 0.90, "ocr_priority": 5 },
+        "power_toughness": { "left": 0.72, "top": 0.90, "right": 0.93, "bottom": 0.96, "ocr_priority": 4 },
+        "collector_info": { "left": 0.05, "top": 0.96, "right": 0.95, "bottom": 0.99, "ocr_priority": 2 },
+        "artist_credit": { "left": 0.05, "top": 0.96, "right": 0.95, "bottom": 0.99, "ocr_priority": 8 }
+      },
+      "has_power_toughness": "detect",
+      "fallback_strategy": "name_only_fuzzy"
+    }
+  },
+  "ocr_priority_explanation": {
+    "0": "Not OCR'd (artwork)",
+    "1": "Card name — primary identification signal, sufficient alone for Scryfall fuzzy match",
+    "2": "Collector info — enables exact printing identification (set + number)",
+    "3": "Type line — disambiguates same-name cards, confirms category",
+    "4": "Power/Toughness — confirms creature stats",
+    "5": "Rules text — cross-reference validation with Scryfall oracle",
+    "6": "Mana cost — confirms color identity (symbol detection, not text OCR)",
+    "7": "Set symbol — rarity detection by color (not text OCR)",
+    "8": "Artist credit — lowest priority, rarely needed for identification"
+  },
+  "fallback_strategies": {
+    "full_bitmap_spatial": "Run ML Kit on full bitmap, assign text by spatial position relative to anatomy regions",
+    "name_only_fuzzy": "Extract only the card name, use Scryfall fuzzy name match for identification",
+    "region_decomposition": "Crop each region independently and run ML Kit per-region (requires good alignment)"
+  },
+  "normalization_rules": {
+    "expansion_translation": {
+      "formula": "abs_pos = card_start + norm_pos × card_range",
+      "card_start": "expansion / (1 + 2×expansion) = 0.1429 for 20% expansion",
+      "card_end": "(1 + expansion) / (1 + 2×expansion) = 0.8571 for 20% expansion",
+      "card_range": "card_end - card_start = 0.7143"
+    },
+    "minimum_region_height_px": 40,
+    "minimum_region_width_px": 50,
+    "ml_kit_requires_context": "Regions < 40px tall often produce zero text blocks"
+  }
+}

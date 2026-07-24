@@ -47,31 +47,31 @@ class FrameLayoutRegistry {
             FrameLayoutTemplate(
                 frameType = FrameType.MODERN,
                 nameBar = ProportionalRect(
-                    top = 0.02f, bottom = 0.10f, left = 0.05f, right = 0.82f
+                    top = 0.0f, bottom = 0.12f, left = 0.03f, right = 0.82f
                 ),
                 manaCost = ProportionalRect(
-                    top = 0.02f, bottom = 0.10f, left = 0.82f, right = 0.95f
+                    top = 0.0f, bottom = 0.12f, left = 0.82f, right = 0.97f
                 ),
                 artwork = ProportionalRect(
-                    top = 0.08f, bottom = 0.50f, left = 0.05f, right = 0.95f
+                    top = 0.10f, bottom = 0.50f, left = 0.03f, right = 0.97f
                 ),
                 typeLine = ProportionalRect(
-                    top = 0.50f, bottom = 0.55f, left = 0.05f, right = 0.85f
+                    top = 0.49f, bottom = 0.57f, left = 0.03f, right = 0.83f
                 ),
                 rulesText = ProportionalRect(
-                    top = 0.55f, bottom = 0.88f, left = 0.05f, right = 0.95f
+                    top = 0.57f, bottom = 0.88f, left = 0.03f, right = 0.97f
                 ),
                 setSymbol = ProportionalRect(
-                    top = 0.50f, bottom = 0.55f, left = 0.85f, right = 0.95f
+                    top = 0.49f, bottom = 0.57f, left = 0.83f, right = 0.97f
                 ),
                 collectorInfo = ProportionalRect(
-                    top = 0.93f, bottom = 0.97f, left = 0.05f, right = 0.50f
+                    top = 0.90f, bottom = 1.0f, left = 0.03f, right = 0.55f
                 ),
                 artistCredit = ProportionalRect(
-                    top = 0.93f, bottom = 0.97f, left = 0.50f, right = 0.95f
+                    top = 0.90f, bottom = 1.0f, left = 0.55f, right = 0.97f
                 ),
                 powerToughness = ProportionalRect(
-                    top = 0.88f, bottom = 0.93f, left = 0.72f, right = 0.93f
+                    top = 0.86f, bottom = 0.93f, left = 0.70f, right = 0.95f
                 )
             ),
 
@@ -173,31 +173,31 @@ class FrameLayoutRegistry {
             FrameLayoutTemplate(
                 frameType = FrameType.UNKNOWN,
                 nameBar = ProportionalRect(
-                    top = 0.02f, bottom = 0.10f, left = 0.05f, right = 0.82f
+                    top = 0.0f, bottom = 0.12f, left = 0.03f, right = 0.82f
                 ),
                 manaCost = ProportionalRect(
-                    top = 0.02f, bottom = 0.10f, left = 0.82f, right = 0.95f
+                    top = 0.0f, bottom = 0.12f, left = 0.82f, right = 0.97f
                 ),
                 artwork = ProportionalRect(
-                    top = 0.08f, bottom = 0.50f, left = 0.05f, right = 0.95f
+                    top = 0.10f, bottom = 0.50f, left = 0.03f, right = 0.97f
                 ),
                 typeLine = ProportionalRect(
-                    top = 0.50f, bottom = 0.55f, left = 0.05f, right = 0.85f
+                    top = 0.49f, bottom = 0.57f, left = 0.03f, right = 0.83f
                 ),
                 rulesText = ProportionalRect(
-                    top = 0.55f, bottom = 0.88f, left = 0.05f, right = 0.95f
+                    top = 0.57f, bottom = 0.88f, left = 0.03f, right = 0.97f
                 ),
                 setSymbol = ProportionalRect(
-                    top = 0.50f, bottom = 0.55f, left = 0.85f, right = 0.95f
+                    top = 0.49f, bottom = 0.57f, left = 0.83f, right = 0.97f
                 ),
                 collectorInfo = ProportionalRect(
-                    top = 0.93f, bottom = 0.97f, left = 0.05f, right = 0.50f
+                    top = 0.90f, bottom = 1.0f, left = 0.03f, right = 0.55f
                 ),
                 artistCredit = ProportionalRect(
-                    top = 0.93f, bottom = 0.97f, left = 0.50f, right = 0.95f
+                    top = 0.90f, bottom = 1.0f, left = 0.55f, right = 0.97f
                 ),
                 powerToughness = ProportionalRect(
-                    top = 0.88f, bottom = 0.93f, left = 0.72f, right = 0.93f
+                    top = 0.86f, bottom = 0.93f, left = 0.70f, right = 0.95f
                 )
             )
         )

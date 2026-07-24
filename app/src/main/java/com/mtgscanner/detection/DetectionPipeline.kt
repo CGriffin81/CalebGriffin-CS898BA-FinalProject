@@ -42,6 +42,10 @@ class DetectionPipeline(
     var lastDetections: List<CardRegion> = emptyList()
         private set
 
+    /** All candidates with accept/reject reasons (for explanatory overlay). */
+    val lastCandidates: List<DetectionCandidate>
+        get() = cardDetector.lastCandidates
+
     /**
      * Process a single camera frame through detection + tracking + normalization.
      */

@@ -60,7 +60,8 @@ fun AppRoot(
     cardAnatomyEngine: CardAnatomyEngine? = null,
     showAnatomyOverlay: Boolean = false,
     onToggleOverlay: () -> Unit = {},
-    pipelineStatus: PipelineStatus = PipelineStatus()
+    pipelineStatus: PipelineStatus = PipelineStatus(),
+    devSettings: com.mtgscanner.devtools.DevSettings? = null
 ) {
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -80,7 +81,8 @@ fun AppRoot(
                         cardAnatomyEngine = cardAnatomyEngine,
                         showAnatomyOverlay = showAnatomyOverlay,
                         onToggleOverlay = onToggleOverlay,
-                        pipelineStatus = pipelineStatus
+                        pipelineStatus = pipelineStatus,
+                        devSettings = devSettings
                     )
 
                     // Back button overlay

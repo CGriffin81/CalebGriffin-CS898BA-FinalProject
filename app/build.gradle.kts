@@ -90,6 +90,9 @@ dependencies {
         exclude(group = "com.google.android.odml", module = "image")
     }
 
+    // ML Kit Object Detection (detects rectangular objects like cards)
+    implementation("com.google.mlkit:object-detection:17.0.2")
+
     // Room Database
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
