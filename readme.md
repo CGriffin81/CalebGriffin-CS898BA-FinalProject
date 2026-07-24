@@ -268,3 +268,16 @@ The application is fully implemented with all 13 core components, complete error
 - Unit tests use `testOptions { unitTests.isReturnDefaultValues = true }` to allow `android.util.Log` calls in production code without crashing JVM tests.
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed testing procedures.
+
+
+
+
+
+#### Loss of Sanity Notes
+I can keep throwing credits at Kiro in an attempt for it to figure out what it has done wrong, but the application is complicated enough that there is about a zero percent chance than Kiro figures out what has gone wrong. Kiro keeps writing tests and passing them, so it is confidently wrong.  
+
+I wonder if the root cause stems from the initial design decision to run at 720p, which was immediately discarded by my phone in lieu of 2992x2992.  
+
+The card detection (find a rectangle) is hilariously bad. It cannot identify a single card when it is the only thing in frame. I need another month of time and credits to straighten this spaghetti.  
+
+There could also be issues stemming from the initial build, which was scary quick. CoPilot generated a lot of code, with basically no oversight. Once it was done running the first prompt I gave it, there was enough code that I could not reasonably review it; rather, I had to trust that the agents passed the tests for the builds that they created for themselves.
